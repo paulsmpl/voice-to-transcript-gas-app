@@ -127,6 +127,9 @@ Note each prompt Doc’s **ID** from its URL:
 https://docs.google.com/document/d/<THIS_IS_THE_ID>/edit
 ```
 
+Examples of daily prompt : https://docs.google.com/document/d/1n9WtAtPKPvOgZwInl6FaH90LOAY6kwvmmkH8LtYRA7c/edit?usp=sharing
+Examples of weekly prompt :  https://docs.google.com/document/d/1edGaDsbAxZQSYuGj7eM77hTGU0qhR-_ZPcvabFqKya4/edit?usp=sharing
+
 ### 3) Create the Apps Script project
 
 - In Google Drive, click **New → More → Google Apps Script**.  
