@@ -134,9 +134,7 @@ https://docs.google.com/document/d/<THIS_IS_THE_ID>/edit
 
 ### 4) Configure Script Properties
 
-Go to **File → Project properties → Script properties** and add:
-
-- `OPENAI_API_KEY = <your OpenAI key>`
+ - Nothing to do here
 
 ### 5) Update configuration constants
 
@@ -156,6 +154,10 @@ Open `config.gs` and set:
 - **Emails**
   - `EMAIL_DESTINATION` — Where to receive **links** to Daily/Weekly/Monthly Docs.
   - `HOURLY_ALERT_EMAIL` — Where to receive **alert emails** on hourly failures.
+ 
+- **OPENAI**
+  
+  - `OPENAI_API_KEY = <your OpenAI key>`
 
 - **Schedules**
   - `HOURLY_TRIGGER_ENABLED = true`
