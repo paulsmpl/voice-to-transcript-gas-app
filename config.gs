@@ -112,11 +112,6 @@ const HOURLY_TRIGGER_ENABLED = true; // mets false si tu veux le couper
 
 
 /** ---- Accès sécurisé à la clé ---- **/
-function getOpenAIKey_() {
-  const key = OPENAI_API_KEY ;
-  if (!key) throw new Error('OPENAI_API_KEY manquante. Va dans Fichier > Propriétés du projet > Propriétés du script.');
-  return key;
-}
 /** Enveloppe un fragment HTML dans un document HTML minimal (UTF-8) */
 function wrapHtmlDocument_(innerHtml) {
   return [
@@ -196,3 +191,4 @@ function isFirstWeekdayOfMonth_(date, weekdayName) {
   return (formatISODate_(d) === formatISODate_(date));
 
 }
+
