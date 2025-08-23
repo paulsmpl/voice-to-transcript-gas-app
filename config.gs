@@ -3,6 +3,50 @@
  * Store your OpenAI key in Script Properties: OPENAI_API_KEY
  */
 
+
+/** ── Template FR Doc IDs (hardcodés, à renseigner) ───────────────────────── **/
+const TEMPLATE_DAILY_PROMPT_FR_ID   = 'REPLACE_WITH_FR_DAILY_TEMPLATE_ID';
+const TEMPLATE_WEEKLY_PROMPT_FR_ID  = 'REPLACE_WITH_FR_WEEKLY_TEMPLATE_ID';
+const TEMPLATE_MONTHLY_PROMPT_FR_ID = 'REPLACE_WITH_FR_MONTHLY_TEMPLATE_ID';
+
+/** ── Shim de configuration : lit d’abord Script Properties, sinon constantes ─ **/
+const CFG = {
+  get: (k, fallback) => PropertiesService.getScriptProperties().getProperty(k) || fallback || '',
+  DRIVE_FOLDER_ID:                 () => CFG.get('DRIVE_FOLDER_ID', DRIVE_FOLDER_ID),
+  ARCHIVE_AUDIO_FOLDER_ID:         () => CFG.get('ARCHIVE_AUDIO_FOLDER_ID', ARCHIVE_AUDIO_FOLDER_ID),
+  TRANSCRIPTION_STORAGE_FOLDER_ID: () => CFG.get('TRANSCRIPTION_STORAGE_FOLDER_ID', TRANSCRIPTION_STORAGE_FOLDER_ID),
+  DAILY_SUMMARY_FOLDER_ID:         () => CFG.get('DAILY_SUMMARY_FOLDER_ID', DAILY_SUMMARY_FOLDER_ID),
+  WEEKLY_SUMMARY_FOLDER_ID:        () => CFG.get('WEEKLY_SUMMARY_FOLDER_ID', WEEKLY_SUMMARY_FOLDER_ID),
+  MONTHLY_SUMMARY_FOLDER_ID:       () => CFG.get('MONTHLY_SUMMARY_FOLDER_ID', MONTHLY_SUMMARY_FOLDER_ID),
+  PROMPT_DOC_ID:                   () => CFG.get('PROMPT_DOC_ID', PROMPT_DOC_ID),
+  PROMPT_WEEKLY_DOC_ID:            () => CFG.get('PROMPT_WEEKLY_DOC_ID', PROMPT_WEEKLY_DOC_ID),
+  PROMPT_MONTHLY_DOC_ID:           () => CFG.get('PROMPT_MONTHLY_DOC_ID', PROMPT_MONTHLY_DOC_ID),
+  EMAIL_DESTINATION:               () => CFG.get('EMAIL_DESTINATION', EMAIL_DESTINATION),
+  HOURLY_ALERT_EMAIL:              () => CFG.get('HOURLY_ALERT_EMAIL', HOURLY_ALERT_EMAIL),
+  OPENAI_API_KEY:                  () => CFG.get('OPENAI_API_KEY', OPENAI_API_KEY)
+};
+
+// Optionnel mais recommandé : que tout le code passe par ces getters :
+function cfgDriveFolderId_()                 { return CFG.DRIVE_FOLDER_ID(); }
+function cfgArchiveAudioFolderId_()          { return CFG.ARCHIVE_AUDIO_FOLDER_ID(); }
+function cfgTranscriptionFolderId_()         { return CFG.TRANSCRIPTION_STORAGE_FOLDER_ID(); }
+function cfgDailySummaryFolderId_()          { return CFG.DAILY_SUMMARY_FOLDER_ID(); }
+function cfgWeeklySummaryFolderId_()         { return CFG.WEEKLY_SUMMARY_FOLDER_ID(); }
+function cfgMonthlySummaryFolderId_()        { return CFG.MONTHLY_SUMMARY_FOLDER_ID(); }
+function cfgPromptDailyId_()                 { return CFG.PROMPT_DOC_ID(); }
+function cfgPromptWeeklyId_()                { return CFG.PROMPT_WEEKLY_DOC_ID(); }
+function cfgPromptMonthlyId_()               { return CFG.PROMPT_MONTHLY_DOC_ID(); }
+function cfgEmailDestination_()              { return CFG.EMAIL_DESTINATION(); }
+function cfgHourlyAlertEmail_()              { return CFG.HOURLY_ALERT_EMAIL(); }
+
+// Adapter getOpenAIKey_ pour lire les Script Properties d’abord :
+function getOpenAIKey_() {
+  const key = CFG.OPENAI_API_KEY();
+  if (!key) throw new Error('OPENAI_API_KEY manquante (Sheet colonne B ou Script Properties).');
+  return key;
+}
+
+
 /** ---- Folder/Doc IDs ---- **/
 // Folder for audio files
 const DRIVE_FOLDER_ID = 'YOUR_DRIVE_FOLDER_ID_HERE';
@@ -150,4 +194,5 @@ function isFirstWeekdayOfMonth_(date, weekdayName) {
   while (d.getDay() !== want) d.setDate(d.getDate()+1);
   // Compare au jour "date"
   return (formatISODate_(d) === formatISODate_(date));
+
 }
