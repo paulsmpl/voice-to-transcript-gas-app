@@ -251,4 +251,44 @@ function formatFileTimeHM_(file) {
   return Utilities.formatDate(d, tz, 'HHmm');
 }
 
+function listAudioFilesInFolderSortedOldestFirst_(folderIdOrUrl, mimeTypes) {
+  const folderId = vnaExtractDriveId_(folderIdOrUrl, 'folder');
+  const it = DriveApp.getFolderById(folderId).getFiles();
+  const out = [];
+  while (it.hasNext()) {
+    const f = it.next();
+    if (f.isTrashed()) continue;
+    if (!mimeTypes || mimeTypes.indexOf(f.getMimeType()) !== -1) out.push(f);
+  }
+  out.sort((a,b) => a.getDateCreated().getTime() - b.getDateCreated().getTime());
+  return out;
+}
+
+function moveFileBetweenFolders_(file, fromFolderIdOrUrl, toFolderIdOrUrl) {
+  const fromId = vnaExtractDriveId_(fromFolderIdOrUrl, 'folder');
+  const toId   = vnaExtractDriveId_(toFolderIdOrUrl, 'folder');
+  const from = DriveApp.getFolderById(fromId);
+  const to   = DriveApp.getFolderById(toId);
+  to.addFile(file);
+  from.removeFile(file);
+}
+function createTranscriptionDoc_(docName, originalFileName, transcriptionText, destFolderIdOrUrl) {
+  const folderId = vnaExtractDriveId_(destFolderIdOrUrl, 'folder');
+
+  const doc = DocumentApp.create(docName);
+  const body = doc.getBody();
+  body.clear();
+  body.appendParagraph('Transcription of ' + originalFileName)
+      .setHeading(DocumentApp.ParagraphHeading.HEADING2);
+  body.appendParagraph(transcriptionText);
+  doc.saveAndClose();
+
+  const targetFolder = DriveApp.getFolderById(folderId);
+  const docFile = DriveApp.getFileById(doc.getId());
+  targetFolder.addFile(docFile);
+  DriveApp.getRootFolder().removeFile(docFile);
+
+  return { docId: doc.getId(), docUrl: 'https://docs.google.com/document/d/' + doc.getId() + '/edit' };
+}
+
 

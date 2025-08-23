@@ -59,15 +59,25 @@ function vnaGetValue_(keyLabel) {
   return '';
 }
 
-/** Sync A/B → Script Properties (toutes les clés connues) */
 function vnaSyncPropsFromSheet() {
   vnaEnsureRows_();
   const props = PropertiesService.getScriptProperties();
+
   VNA_ROWS.forEach(([label, propKey]) => {
     const v = vnaGetValue_(label);
-    if (v) props.setProperty(propKey, v);
+    if (!v) return;
+
+    let store = v;
+    // si c'est un *_FOLDER_ID ou *_DOC_ID, normaliser en ID
+    if (/_FOLDER_ID$/.test(propKey)) {
+      store = vnaExtractDriveId_(v, 'folder');
+    } else if (/PROMPT_.*_DOC_ID$/.test(propKey) || /_DOC_ID$/.test(propKey)) {
+      store = vnaExtractDriveId_(v, 'doc');
+    }
+    props.setProperty(propKey, store);
   });
-  SpreadsheetApp.getActive().toast('Synced Sheet → Script Properties');
+
+  SpreadsheetApp.getActive().toast('Synced Sheet → Script Properties (IDs normalized)');
 }
 
 /** Sync Script Properties → B (utile quand on réinstalle) */
@@ -87,20 +97,43 @@ function vnaGetOrCreateFolder_(parentFolder, name) {
   return parentFolder.createFolder(name);
 }
 
-/** Crée un Doc EN à partir d’un template FR : copie + traduction (texte brut) */
-function vnaCreatePromptEnFromTemplate_(templateId, newName, destFolder) {
-  // 1) on copie le fichier pour garder permissions/metadata simples
-  const copyFile = DriveApp.getFileById(templateId).makeCopy(newName, destFolder);
-  // 2) on remplace le contenu par une traduction FR→EN (texte simple)
-  const doc = DocumentApp.openById(copyFile.getId());
-  const body = doc.getBody();
-  const fr = body.getText();
-  const en = LanguageApp.translate(fr, 'fr', 'en');
-  body.clear();
-  body.appendParagraph(en);
-  doc.saveAndClose();
-  return copyFile; // File (Drive)
+/** Create an EN prompt from a FR template (copy + FR→EN translate). */
+function vnaCreatePromptEnFromTemplate_(templateIdOrUrl, newName, destFolder) {
+  const ui = SpreadsheetApp.getUi();
+  const tid = vnaExtractDriveId_(templateIdOrUrl, 'doc');
+
+  let templateFile;
+  try {
+    templateFile = DriveApp.getFileById(tid);
+  } catch (e) {
+    ui.alert('Cannot access template Doc ID: ' + tid + '\n' +
+             'Original value: ' + templateIdOrUrl + '\n' +
+             'Make sure this Google Doc exists and is accessible to this account.\n\n' +
+             'Error: ' + (e && e.message ? e.message : e));
+    throw e;
+  }
+
+  // Copy into destination folder
+  const copy = templateFile.makeCopy(newName, destFolder);
+
+  // Translate content FR -> EN inside the copy
+  try {
+    const doc = DocumentApp.openById(copy.getId());
+    const body = doc.getBody();
+    const fr = body.getText();
+    const en = LanguageApp.translate(fr, 'fr', 'en');
+    body.clear();
+    body.appendParagraph(en);
+    doc.saveAndClose();
+  } catch (e) {
+    ui.alert('Copy created but failed to translate content for: ' + newName + '\n' +
+             'Doc ID: ' + copy.getId() + '\nError: ' + (e && e.message ? e.message : e));
+    throw e;
+  }
+
+  return copy; // Drive File
 }
+
 
 /** Construit une URL Drive/Doc depuis un ID */
 function vnaFolderUrl_(id) { return 'https://drive.google.com/drive/folders/' + id; }
@@ -202,3 +235,33 @@ function vnaOpenDaily()       { vnaOpenLink_(vnaGetValue_('Daily Summaries Folde
 function vnaOpenWeekly()      { vnaOpenLink_(vnaGetValue_('Weekly Summaries Folder'),'Weekly Summaries'); }
 function vnaOpenMonthly()     { vnaOpenLink_(vnaGetValue_('Monthly Summaries Folder'),'Monthly Summaries'); }
 function vnaOpenPromptsEn()   { vnaOpenLink_(vnaGetValue_('Prompts Folder (EN)'),'Prompts (EN)'); }
+
+/** Extract a Drive ID from an ID or URL. kind: 'doc' | 'folder' | 'any' */
+function vnaExtractDriveId_(input, kind) {
+  const s = String(input || '').trim();
+  if (!s) return '';
+  // Plain ID?
+  if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
+
+  // Try URL patterns
+  const patterns = [
+    /\/document\/d\/([A-Za-z0-9_-]+)/, // Docs
+    /\/folders\/([A-Za-z0-9_-]+)/,     // Folders
+    /\/file\/d\/([A-Za-z0-9_-]+)/      // Generic file
+  ];
+  for (const re of patterns) {
+    const m = s.match(re);
+    if (m && m[1]) return m[1];
+  }
+  if (kind === 'doc') throw new Error('Invalid Google Doc ID/URL: ' + s);
+  if (kind === 'folder') throw new Error('Invalid Google Drive folder ID/URL: ' + s);
+  throw new Error('Invalid Drive ID/URL: ' + s);
+}
+
+/** Quick Drive scope poke to trigger auth if needed */
+function vnaEnsureDriveAuth_() {
+  const root = DriveApp.getRootFolder();
+  // no-op, just to ensure OAuth prompt
+  if (!root) throw new Error('Drive root not accessible (auth?)');
+}
+

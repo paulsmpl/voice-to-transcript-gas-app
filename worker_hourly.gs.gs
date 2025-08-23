@@ -1,10 +1,10 @@
 /**
  * Worker horaire: traite AU PLUS un audio par exécution.
- * - prend le plus ancien audio dans DRIVE_FOLDER_ID
+ * - prend le plus ancien audio dans le dossier source (cfgDriveFolderId_)
  * - transcrit (avec retries déjà présents dans transcribeAudio_)
  * - crée le Doc de transcription préfixé par la date de l'audio
- * - archive l'audio dans ARCHIVE_AUDIO_FOLDER_ID
- * - en cas d'erreur => alerte email HOURLY_ALERT_EMAIL
+ * - archive l'audio dans le dossier archive (cfgArchiveAudioFolderId_)
+ * - en cas d'erreur => alerte email cfgHourlyAlertEmail_()
  */
 
 function hourlyTranscriptionWorker() {
@@ -13,10 +13,17 @@ function hourlyTranscriptionWorker() {
     return;
   }
 
+  const sourceId = cfgDriveFolderId_();
+  const archiveId = cfgArchiveAudioFolderId_();
+  const transId = cfgTranscriptionFolderId_();
+  const alertTo = cfgHourlyAlertEmail_();
+
   Logger.log('--- HOURLY WORKER start ---');
+  Logger.log(`IDs utilisés | source=${sourceId} | trans=${transId} | archive=${archiveId}`);
+
   try {
     // 1) Récupère les audios à traiter (FIFO: plus ancien d’abord)
-    const candidates = listAudioFilesInFolderSortedOldestFirst_(DRIVE_FOLDER_ID, AUDIO_MIME_TYPES);
+    const candidates = listAudioFilesInFolderSortedOldestFirst_(sourceId, AUDIO_MIME_TYPES);
     if (!candidates.length) {
       Logger.log('Aucun nouvel audio à traiter.');
       return;
@@ -28,7 +35,7 @@ function hourlyTranscriptionWorker() {
     if (MAX_AUDIO_MB && sizeMB > MAX_AUDIO_MB) {
       const msg = `Audio trop volumineux (${sizeMB.toFixed(2)} MB > ${MAX_AUDIO_MB} MB) : ${file.getName()}`;
       Logger.log(msg);
-      sendEmail_(HOURLY_ALERT_EMAIL, 'Hourly worker - audio trop volumineux', msg);
+      sendEmail_(alertTo, 'Hourly worker - audio trop volumineux', msg);
       return; // on laisse le fichier en place pour action manuelle
     }
 
@@ -37,25 +44,23 @@ function hourlyTranscriptionWorker() {
     const text = transcribeAudio_(file); // retries déjà en place
 
     // 4) Création du Doc de transcription
-    //    Nom = date/heure du fichier + "__" + nom de l'audio nettoyé, tronqué si trop long
     const dYMD = formatFileDateYMD_(file); // yyyy-MM-dd (basé sur date du fichier)
     const tHM  = formatFileTimeHM_(file);  // HHmm        (basé sur date du fichier)
     const safeAudioName = sanitizeForTitle_(file.getName());
-    const baseDocName   = `${dYMD}-${tHM}__${safeAudioName}`; // ex: "2025-08-18-0739__meeting-marketing.mp3"
+    const baseDocName   = `${dYMD}-${tHM}__${safeAudioName}`;
     const docName       = truncateMiddle_(baseDocName, 140);
 
-    createTranscriptionDoc_(docName, file.getName(), text, TRANSCRIPTION_STORAGE_FOLDER_ID);
+    createTranscriptionDoc_(docName, file.getName(), text, transId);
     Logger.log(`Doc de transcription créé: ${docName}`);
 
     // 5) Archive l'audio
-    moveFileBetweenFolders_(file, DRIVE_FOLDER_ID, ARCHIVE_AUDIO_FOLDER_ID);
+    moveFileBetweenFolders_(file, sourceId, archiveId);
     Logger.log(`Audio archivé: ${file.getName()}`);
 
   } catch (e) {
     const err = (e && e.message) ? e.message : String(e);
     Logger.log('ERREUR Hourly worker: ' + err);
-    sendEmail_(HOURLY_ALERT_EMAIL, 'Hourly worker - transcription FAILED', err);
-    // pas de rethrow: on veut que les runs suivants continuent.
+    sendEmail_(alertTo || cfgEmailDestination_(), 'Hourly worker - transcription FAILED', err);
   }
   Logger.log('--- HOURLY WORKER end ---');
 }

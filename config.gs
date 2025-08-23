@@ -4,10 +4,11 @@
  */
 
 
+
 /** ── Template FR Doc IDs (hardcodés, à renseigner) ───────────────────────── **/
-const TEMPLATE_DAILY_PROMPT_FR_ID   = 'REPLACE_WITH_FR_DAILY_TEMPLATE_ID';
-const TEMPLATE_WEEKLY_PROMPT_FR_ID  = 'REPLACE_WITH_FR_WEEKLY_TEMPLATE_ID';
-const TEMPLATE_MONTHLY_PROMPT_FR_ID = 'REPLACE_WITH_FR_MONTHLY_TEMPLATE_ID';
+const TEMPLATE_DAILY_PROMPT_FR_ID   = '1fQjkUZFgYY9394Y92kXiZB1Dy5P7pw_kXPWnHf_BXd4';
+const TEMPLATE_WEEKLY_PROMPT_FR_ID  = '1Ks6hYPA7-04dHZMR6IYtWXEZepALiVytAmBVWab1phY';
+const TEMPLATE_MONTHLY_PROMPT_FR_ID = '19X1O4azfhfQMF12tC5RQXDYchxa4VyLpL0_HtuJRcKg';
 
 /** ── Shim de configuration : lit d’abord Script Properties, sinon constantes ─ **/
 const CFG = {
@@ -67,7 +68,7 @@ const MONTHLY_SUMMARY_FOLDER_ID = 'YOUR_MONTHLY_SUMMARY_FOLDER_ID_HERE';
 const ARCHIVE_AUDIO_FOLDER_ID = 'YOUR_ARCHIVE_AUDIO_FOLDER_ID_HERE';
 
 // Notification email (now only sends the link of the created Doc)
-const EMAIL_DESTINATION = 'YOUR_EMAIL_HERE';
+const EMAIL_DESTINATION = 'YOUR_EMAIL_HEREsalut';
 
 /** ---- Email d'alerte pour le worker horaire ---- **/
 const HOURLY_ALERT_EMAIL = 'YOUR_EMAIL_HERE';
