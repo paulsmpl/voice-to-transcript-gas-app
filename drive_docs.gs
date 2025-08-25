@@ -51,16 +51,24 @@ function createNamedDocInFolder_(docName, content, folderId) {
   return { docId: doc.getId(), docUrl: doc.getUrl(), name: docName };
 }
 
-/** Retourne le premier Doc dans folderId dont le nom commence par prefix (ou null). */
-function findDocByNamePrefixInFolder_(folderId, prefix) {
+/** Returns all Google Docs in a folder whose NAME starts with prefix. */
+function findDocByNamePrefixInFolder_(folderIdOrUrl, prefix) {
+  const folderId = vnaExtractDriveId_(folderIdOrUrl, 'folder');
   const folder = DriveApp.getFolderById(folderId);
+
   const it = folder.getFiles();
+  const out = [];
   while (it.hasNext()) {
     const f = it.next();
-    if (!f.isTrashed() && f.getName().startsWith(prefix)) return f;
+    if (f.isTrashed()) continue;
+    if (f.getMimeType() !== MimeType.GOOGLE_DOCS) continue;
+    if ((f.getName() || '').startsWith(prefix)) out.push(f);
   }
-  return null;
+  // Order by name ascending so 2025-08-01 < 2025-08-02 etc.
+  out.sort((a, b) => a.getName().localeCompare(b.getName()));
+  return out;
 }
+
 
 /** Liste tous les fichiers (non corbeille) d’un dossier, triés par date de création DESC. */
 function listFilesInFolderSortedByCreatedDesc_(folderId) {
@@ -75,24 +83,50 @@ function listFilesInFolderSortedByCreatedDesc_(folderId) {
   return files;
 }
 
-/** Récupère les 7 derniers daily (par préfixe de date 'yyyy-MM-dd - Daily Summary') à partir d’hier. */
+/**
+ * Returns the 7 most recent Daily Summary Docs.
+ * Matches by title suffix " - Daily Summary" (case-insensitive) and sorts by name desc (YYYY-MM-DD…).
+ */
 function getLast7DailySummaries_() {
-  const dates = getLastNDatesFromYesterdayStrings_(7); // [J-1,...,J-7]
-  const out = [];
-  for (const ds of dates) {
-    const prefix = `${ds} - Daily Summary`;
-    const f = findDocByNamePrefixInFolder_(DAILY_SUMMARY_FOLDER_ID, prefix);
-    if (f) out.push(f);
+  const folderId = vnaExtractDriveId_(cfgDailySummaryFolderId_(), 'folder');
+  const folder = DriveApp.getFolderById(folderId);
+
+  const it = folder.getFiles();
+  const all = [];
+  while (it.hasNext()) {
+    const f = it.next();
+    if (f.isTrashed()) continue;
+    if (f.getMimeType() !== MimeType.GOOGLE_DOCS) continue;
+    const name = f.getName() || '';
+    if (/-\s*Daily Summary\b/i.test(name)) all.push(f);
   }
-  return out; // tableau de File (ordre J-1 -> J-7)
+  // Names are "YYYY-MM-DD - Daily Summary" -> lexical sort works
+  all.sort((a, b) => b.getName().localeCompare(a.getName()));
+  return all.slice(0, 7);
 }
 
-/** Récupère les 5 derniers weekly (par nom contenant 'Weekly Summary'), triés DESC. */
+
+/**
+ * Returns the 5 most recent Weekly Summary Docs.
+ * Matches by title suffix " - Weekly Summary" (case-insensitive).
+ */
 function getLast5WeeklySummaries_() {
-  const all = listFilesInFolderSortedByCreatedDesc_(WEEKLY_SUMMARY_FOLDER_ID);
-  const filtered = all.filter(f => f.getName().indexOf('Weekly Summary') !== -1);
-  return filtered.slice(0,5);
+  const folderId = vnaExtractDriveId_(cfgWeeklySummaryFolderId_(), 'folder');
+  const folder = DriveApp.getFolderById(folderId);
+
+  const it = folder.getFiles();
+  const all = [];
+  while (it.hasNext()) {
+    const f = it.next();
+    if (f.isTrashed()) continue;
+    if (f.getMimeType() !== MimeType.GOOGLE_DOCS) continue;
+    const name = f.getName() || '';
+    if (/-\s*Weekly Summary\b/i.test(name)) all.push(f);
+  }
+  all.sort((a, b) => b.getName().localeCompare(a.getName()));
+  return all.slice(0, 5);
 }
+
 
 /** Envoie un email ne contenant que le lien du Doc créé. */
 function sendEmailWithLink_(to, subject, docUrl) {
@@ -100,11 +134,8 @@ function sendEmailWithLink_(to, subject, docUrl) {
   MailApp.sendEmail(to, subject, body);
 }
 
-/**
- * Conversion HTML -> Google Doc en un seul appel via Advanced Drive Service (v2).
- * Nécessite l’Advanced Drive Service "Drive" activé.
- */
-function createDocFromHtmlInFolder_(docName, html, folderId) {
+function createDocFromHtmlInFolder_(docName, html, folderIdOrUrl) {
+  const folderId = vnaExtractDriveId_(folderIdOrUrl, 'folder');
   const blob = Utilities.newBlob(html, 'text/html', docName + '.html');
   const resource = {
     title: docName,
@@ -114,6 +145,7 @@ function createDocFromHtmlInFolder_(docName, html, folderId) {
   const file = Drive.Files.insert(resource, blob, { convert: true });
   return { docId: file.id, docUrl: 'https://docs.google.com/document/d/' + file.id + '/edit', name: docName };
 }
+
 
 /** Détection très simple : a-t-on déjà des balises HTML sémantiques ? */
 function looksLikeHtml_(s) {
