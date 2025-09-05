@@ -18,9 +18,14 @@ pipeline {
     stage('Setup Python venv') {
       steps {
         sh '''
+          # Installe les paquets système
           apt-get update
           apt-get install -y python3 python3-pip python3.11-venv python3-venv python3-full ffmpeg build-essential
+         
+          # Crée l'environnement virtuel
           /usr/bin/python3 -m venv venv
+         
+          # Active l'environnement virtuel et installe les dépendances
           . venv/bin/activate
           pip install --upgrade pip
           pip install -r requirements.txt
@@ -43,8 +48,9 @@ pipeline {
       when { expression { env.MODE == 'DAILY' } }
       steps {
         sh """
+          # Active l'environnement virtuel au début de ce stage
           . venv/bin/activate
-
+         
           # 1) Check status
           curl -sS '${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' -o status.json
           python - <<'PY'
@@ -53,22 +59,22 @@ s=json.load(open('status.json'))
 if not s['hasInput']: sys.exit(0)
 if s['hasBestof']: sys.exit(0)
 PY
-
+         
           # 2) Download audios
           curl -sS '${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' -o audios_${DATE_TO_PROCESS}.zip
-
+         
           # 3) Best-of
           export OPENAI_API_KEY='${OPENAI_API_KEY}'
-          python zip_bestof_whisperx.py audios_${DATE_TO_PROCESS}.zip \\
-            --keep_pct ${KEEP_PCT} \\
-            --out_dir out_${DATE_TO_PROCESS} \\
-            --gas_url '${GAS_URL}' \\
+          python zip_bestof_whisperx.py audios_${DATE_TO_PROCESS}.zip \
+            --keep_pct ${KEEP_PCT} \
+            --out_dir out_${DATE_TO_PROCESS} \
+            --gas_url '${GAS_URL}' \
             --doc_id '${GAS_DOC_ID}'
-
+         
           # 4) Upload
-          curl -sS -X POST '${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' \\
+          curl -sS -X POST '${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' \
                --data-binary @out_${DATE_TO_PROCESS}/bestof.mp3
-
+         
           # 5) Archive
           curl -sS -X POST '${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}'
         """
