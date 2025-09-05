@@ -2,3 +2,4 @@ pydub
 openai>=1.0.0
 praat-parselmouth
 git+https://github.com/m-bain/whisperX.git
+gdown
