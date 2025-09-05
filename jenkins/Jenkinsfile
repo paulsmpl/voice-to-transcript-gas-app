@@ -19,7 +19,7 @@ pipeline {
       steps {
         sh '''
           apt-get update
-          apt-get install -y python3 python3-pip python3.11-venv python3-venv python3-full ffmpeg build-essential jq
+          apt-get install -y python3 python3-pip python3.11-venv python3-venv python3-full ffmpeg build-essential jq gdown
           /usr/bin/python3 -m venv venv
           . venv/bin/activate
           pip install --upgrade pip
@@ -53,9 +53,10 @@ if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
           # 2) Get download URL
-          ZIP_URL=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" | jq -r .url)
+          ZIP_URL=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" | python -c "import sys, json; print(json.load(sys.stdin)['url'])")
+          FILE_ID=$(echo $ZIP_URL | sed -E 's/.*id=([^&]+)/\1/')
           # 3) Download audios
-          curl -sSL "$ZIP_URL" -o "audios_${DATE_TO_PROCESS}.zip"
+          gdown --id $FILE_ID -O "audios_${DATE_TO_PROCESS}.zip"
           # 4) Best-of
           export OPENAI_API_KEY="${OPENAI_API_KEY}"
           python zip_bestof_whisperx_jenk.py audios_${DATE_TO_PROCESS}.zip \
