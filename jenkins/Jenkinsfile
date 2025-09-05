@@ -42,10 +42,10 @@ pipeline {
     stage('Process daily') {
       when { expression { env.MODE == 'DAILY' } }
       steps {
-        sh """
+        sh '''
           . venv/bin/activate
           # 1) Check status
-          curl -sSL "${GAS_BASE_URL}"?action=status&date="${DATE_TO_PROCESS}"&token="${GAS_TOKEN}" -o status.json
+          curl -sSL "${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" -o status.json
           python - <<'PY'
 import json,sys
 s=json.load(open('status.json'))
@@ -53,22 +53,22 @@ if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
           # 2) Get download URL
-          ZIP_URL=$(curl -sSL "${GAS_BASE_URL}"?action=zip&date="${DATE_TO_PROCESS}"&token="${GAS_TOKEN}" | jq -r .url)
+          ZIP_URL=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" | jq -r .url)
           # 3) Download audios
           curl -sSL "$ZIP_URL" -o "audios_${DATE_TO_PROCESS}.zip"
-          # 3) Best-of
-          export OPENAI_API_KEY='${OPENAI_API_KEY}'
-          python zip_bestof_whisperx_jenk.py audios_${DATE_TO_PROCESS}.zip \\
-            --keep_pct ${KEEP_PCT} \\
-            --out_dir out_${DATE_TO_PROCESS} \\
-            --gas_url '${GAS_URL}' \\
-            --doc_id '${GAS_DOC_ID}'
-          # 4) Upload
-          curl -sS -X POST "${GAS_BASE_URL}"?action=uploadBestof&date="${DATE_TO_PROCESS}"&token="${GAS_TOKEN}" \\
+          # 4) Best-of
+          export OPENAI_API_KEY="${OPENAI_API_KEY}"
+          python zip_bestof_whisperx_jenk.py audios_${DATE_TO_PROCESS}.zip \
+            --keep_pct ${KEEP_PCT} \
+            --out_dir out_${DATE_TO_PROCESS} \
+            --gas_url "${GAS_URL}" \
+            --doc_id "${GAS_DOC_ID}"
+          # 5) Upload
+          curl -sS -X POST "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
                --data-binary @out_${DATE_TO_PROCESS}/bestof.mp3
-          # 5) Archive
-          curl -sS -X POST "${GAS_BASE_URL}"?action=archive&date="${DATE_TO_PROCESS}"&token="${GAS_TOKEN}"
-        """
+          # 6) Archive
+          curl -sS -X POST "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
+        '''
       }
     }
   }
