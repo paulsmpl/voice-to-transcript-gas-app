@@ -53,10 +53,13 @@ if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
           # 2) Get download URL
-          ZIP_URL=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" | python -c "import sys, json; print(json.load(sys.stdin)['url'])")
-          FILE_ID=$(echo $ZIP_URL | sed -E 's/.*id=([^&]+)/\1/')
-          # 3) Download audios
-          gdown --id $FILE_ID -O "audios_${DATE_TO_PROCESS}.zip"
+          ZIP_URL=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
+            | python -c "import sys, json; print(json.load(sys.stdin)['url'])")
+          
+          FILE_ID=$(echo "$ZIP_URL" | sed -E 's/.*id=([^&]+).*/\1/')
+          
+          gdown --id "$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
+
           # 4) Best-of
           export OPENAI_API_KEY="${OPENAI_API_KEY}"
           python zip_bestof_whisperx_jenk.py audios_${DATE_TO_PROCESS}.zip \
