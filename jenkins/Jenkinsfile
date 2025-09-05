@@ -67,7 +67,7 @@ PY
          
           # 3) Best-of
           export OPENAI_API_KEY='${OPENAI_API_KEY}'
-          python zip_bestof_whisperx.py audios_${DATE_TO_PROCESS}.zip \
+          python zip_bestof_whisperx_jenk.py audios_${DATE_TO_PROCESS}.zip \
             --keep_pct ${KEEP_PCT} \
             --out_dir out_${DATE_TO_PROCESS} \
             --gas_url '${GAS_URL}' \
