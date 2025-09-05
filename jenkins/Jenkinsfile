@@ -53,6 +53,7 @@ pipeline {
          
           # 1) Check status
           curl -sS '${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' -o status.json
+          cat status.json
           python - <<'PY'
 import json,sys
 s=json.load(open('status.json'))
