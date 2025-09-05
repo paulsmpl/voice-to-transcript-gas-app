@@ -52,7 +52,7 @@ pipeline {
           . venv/bin/activate
          
           # 1) Check status
-          curl -sS '${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' -o status.json
+          curl -sSL '${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' -o status.json
           cat status.json
           python - <<'PY'
 import json,sys
@@ -62,7 +62,7 @@ if s['hasBestof']: sys.exit(0)
 PY
          
           # 2) Download audios
-          curl -sS '${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' -o audios_${DATE_TO_PROCESS}.zip
+          curl -sSL '${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' -o audios_${DATE_TO_PROCESS}.zip
          
           # 3) Best-of
           export OPENAI_API_KEY='${OPENAI_API_KEY}'
@@ -73,11 +73,11 @@ PY
             --doc_id '${GAS_DOC_ID}'
          
           # 4) Upload
-          curl -sS -X POST '${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' \
+          curl -sSL -X POST '${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' \
                --data-binary @out_${DATE_TO_PROCESS}/bestof.mp3
          
           # 5) Archive
-          curl -sS -X POST '${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}'
+          curl -sSL -X POST '${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}'
         """
       }
     }
