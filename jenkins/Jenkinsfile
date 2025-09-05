@@ -15,11 +15,13 @@ pipeline {
         git branch: 'main', url: 'https://github.com/paulsmpl/voice-to-transcript-gas-app.git'
       }
     }
-    stage('Setup Python') {
+    stage('Setup Python venv') {
       steps {
         sh '''
-          /usr/bin/python3 -m pip install --upgrade pip
-          /usr/bin/python3 -m pip install -r requirements.txt
+          /usr/bin/python3 -m venv venv
+          . venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
         '''
       }
     }
