@@ -18,8 +18,6 @@ pipeline {
     stage('Setup Python venv') {
       steps {
         sh '''
-          /usr/bin/python3 -m venv venv
-          . venv/bin/activate
           pip install --upgrade pip
           pip install -r requirements.txt
         '''
@@ -30,7 +28,7 @@ pipeline {
         script {
           if (env.MODE == 'DAILY') {
             env.DATE_TO_PROCESS = sh(
-              script: "python - <<'PY'\nfrom datetime import datetime,timedelta;print((datetime.utcnow()-timedelta(days=1)).strftime('%Y-%m-%d'))\nPY",
+              script: "/usr/bin/python3 - <<'PY'\nfrom datetime import datetime,timedelta;print((datetime.utcnow()-timedelta(days=1)).strftime('%Y-%m-%d'))\nPY",
               returnStdout: true
             ).trim()
           }
@@ -43,7 +41,7 @@ pipeline {
         sh """
           # 1) Check status
           curl -sS '${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}' -o status.json
-          python - <<'PY'
+          /usr/bin/python3 - <<'PY'
 import json,sys
 s=json.load(open('status.json'))
 if not s['hasInput']: sys.exit(0)
@@ -55,8 +53,7 @@ PY
 
           # 3) Best-of
           export OPENAI_API_KEY='${OPENAI_API_KEY}'
-          . venv/bin/activate
-          python zip_bestof_whisperx.py audios_${DATE_TO_PROCESS}.zip \
+          /usr/bin/python3 zip_bestof_whisperx.py audios_${DATE_TO_PROCESS}.zip \
             --keep_pct ${KEEP_PCT} \
             --out_dir out_${DATE_TO_PROCESS} \
             --gas_url '${GAS_URL}' \
