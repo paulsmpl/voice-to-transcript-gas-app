@@ -52,8 +52,10 @@ s=json.load(open('status.json'))
 if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
-          # 2) Download audios
-          curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" -o audios_${DATE_TO_PROCESS}.zip
+          # 2) Get download URL
+          ZIP_URL=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" | jq -r .url)
+          # 3) Download audios
+          curl -sSL "$ZIP_URL" -o "audios_${DATE_TO_PROCESS}.zip"
           # 3) Best-of
           export OPENAI_API_KEY='${OPENAI_API_KEY}'
           python zip_bestof_whisperx_jenk.py audios_${DATE_TO_PROCESS}.zip \\
