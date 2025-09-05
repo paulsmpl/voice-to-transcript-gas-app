@@ -52,13 +52,12 @@ s=json.load(open('status.json'))
 if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
-          # 2) Get download URL
-          ZIP_URL=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
-            | python -c "import sys, json; print(json.load(sys.stdin)['url'])")
+          # 2) Get file ID from GAS
+          FILE_ID=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
+            | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
           
-          FILE_ID=$(echo "$ZIP_URL" | sed -E 's/.*id=([^&]+).*/\1/')
-          
-          gdown --id "$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
+          # 3) Download audios with gdown
+          gdown "$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
 
           # 4) Best-of
           export OPENAI_API_KEY="${OPENAI_API_KEY}"
