@@ -24,7 +24,6 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '20'))
     timeout(time: 120, unit: 'MINUTES')
     timestamps()
-    shell('/bin/bash')   // << force bash for all sh steps
   }
 
   stages {
@@ -37,20 +36,20 @@ pipeline {
 
     stage('Setup system deps & venv') {
       steps {
-        sh '''
-          set -euxo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y --no-install-recommends \
-             python3 python3-pip python3.11-venv python3-venv python3-full \
-             ffmpeg build-essential jq ca-certificates
-          python3 -m venv venv
-          . venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # ensure gdown present (used below)
-          pip install --upgrade gdown
-        '''
+        sh '''#!/usr/bin/env bash
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends \
+  python3 python3-pip python3.11-venv python3-venv python3-full \
+  ffmpeg build-essential jq ca-certificates
+python3 -m venv venv
+. venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+# ensure gdown present (used below)
+pip install --upgrade gdown
+'''
       }
     }
 
@@ -58,13 +57,14 @@ pipeline {
       steps {
         script {
           if (env.MODE == 'DAILY') {
-            env.DATE_TO_PROCESS = sh(
-              script: """. venv/bin/activate && python - <<'PY'
+            env.DATE_TO_PROCESS = sh(returnStdout: true, script: '''#!/usr/bin/env bash
+set -euo pipefail
+. venv/bin/activate
+python - <<'PY'
 from datetime import datetime, timedelta
 print((datetime.utcnow()-timedelta(days=1)).strftime('%Y-%m-%d'))
-PY""",
-              returnStdout: true
-            ).trim()
+PY
+''').trim()
           }
         }
       }
@@ -73,25 +73,25 @@ PY""",
     stage('Process daily') {
       when { expression { env.MODE == 'DAILY' } }
       steps {
-        sh '''
-          set -euxo pipefail
-          . venv/bin/activate
+        sh '''#!/usr/bin/env bash
+set -euxo pipefail
+. venv/bin/activate
 
-          # Detect GPU; choose device & batch size conservatively
-          if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
-            DEVICE="cuda"
-            BATCH_SIZE="8"     # keep modest to limit VRAM
-            COMPUTE_TYPE="float16"
-          else
-            DEVICE="cpu"
-            BATCH_SIZE="4"     # smaller for low RAM
-            COMPUTE_TYPE="float32"
-          fi
-          echo "Using DEVICE=$DEVICE, BATCH_SIZE=$BATCH_SIZE, COMPUTE_TYPE=$COMPUTE_TYPE"
+# Detect GPU; choose device & batch size conservatively
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+  DEVICE="cuda"
+  BATCH_SIZE="8"     # keep modest to limit VRAM
+  COMPUTE_TYPE="float16"
+else
+  DEVICE="cpu"
+  BATCH_SIZE="4"     # smaller for low RAM
+  COMPUTE_TYPE="float32"
+fi
+echo "Using DEVICE=$DEVICE, BATCH_SIZE=$BATCH_SIZE, COMPUTE_TYPE=$COMPUTE_TYPE"
 
-          # 1) Check status
-          curl -sSL "${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" -o status.json
-          python - <<'PY'
+# 1) Check status
+curl -sSL "${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" -o status.json
+python - <<'PY'
 import json,sys
 s=json.load(open('status.json'))
 # skip build (success) when no input or already has bestof
@@ -99,45 +99,39 @@ if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
 
-          # 2) Get file ID from GAS
-          FILE_ID=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
-            | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
+# 2) Get file ID from GAS
+FILE_ID=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
+  | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
 
-          # 3) Download audios
-          gdown "$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
+# 3) Download audios
+gdown "$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
 
-          # 4) Best-of (memory-safe script already updated)
-          export OPENAI_API_KEY="${OPENAI_API_KEY}"
-          python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
-            --keep_pct "${KEEP_PCT}" \
-            --out_dir "out_${DATE_TO_PROCESS}" \
-            --gas_url "${GAS_URL}" \
-            --doc_id "${GAS_DOC_ID}" \
-            --whisperx_model "small" \
-            --device "${DEVICE}" \
-            --compute_type "${COMPUTE_TYPE}" \
-            --batch_size "${BATCH_SIZE}"
+# 4) Best-of (memory-safe script already updated)
+export OPENAI_API_KEY="${OPENAI_API_KEY}"
+python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
+  --keep_pct "${KEEP_PCT}" \
+  --out_dir "out_${DATE_TO_PROCESS}" \
+  --gas_url "${GAS_URL}" \
+  --doc_id "${GAS_DOC_ID}" \
+  --whisperx_model "small" \
+  --device "${DEVICE}" \
+  --compute_type "${COMPUTE_TYPE}" \
+  --batch_size "${BATCH_SIZE}"
 
-          # 5) Upload MP3
-          curl -sS -X POST "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
-               --data-binary @out_${DATE_TO_PROCESS}/bestof.mp3
+# 5) Upload MP3
+curl -sS -X POST "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
+     --data-binary @out_${DATE_TO_PROCESS}/bestof.mp3
 
-          # 6) Archive
-          curl -sS -X POST "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
-        '''
+# 6) Archive
+curl -sS -X POST "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
+'''
       }
     }
   }
 
   post {
-    failure {
-      echo 'Build failed.'
-    }
-    success {
-      echo 'Done.'
-    }
-    always {
-      sh 'rm -f status.json || true'
-    }
+    failure { echo 'Build failed.' }
+    success { echo 'Done.' }
+    always  { sh 'rm -f status.json || true' }
   }
 }
