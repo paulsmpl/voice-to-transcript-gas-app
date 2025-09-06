@@ -24,6 +24,7 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '20'))
     timeout(time: 120, unit: 'MINUTES')
     timestamps()
+    shell('/bin/bash')   // << force bash for all sh steps
   }
 
   stages {
