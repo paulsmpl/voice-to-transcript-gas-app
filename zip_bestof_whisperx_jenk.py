@@ -70,19 +70,60 @@ def unzip_mp3s(zip_path: str) -> List[Path]:
 # 2) WhisperX per-file
 # =========================
 
-def load_whisperx_models(device: str, compute_type: str, whisperx_model: str):
+def load_asr_model(device: str, compute_type: str, whisperx_model: str):
     print(f"[INFO] WhisperX sur {device} (compute={compute_type}, model={whisperx_model})")
     asr_model = whisperx.load_model(whisperx_model, device, compute_type=compute_type)
-    align_model, metadata = whisperx.load_align_model(language_code=None, device=device)
-    return asr_model, align_model, metadata
+    return asr_model
 
-def transcribe_one_file(path: Path, asr_model, align_model, metadata, device: str, batch_size: int) -> Dict[str, Any]:
-    # Transcribe this file only
+def get_align_model(lang: str, device: str, cache: Dict[Tuple[str, str], Tuple[object, dict]], align_model_name: str | None = None):
+    """
+    Lazy-load and cache alignment model for a given language.
+    cache key: (lang, align_model_name or '')
+    """
+    key = (lang or "", align_model_name or "")
+    if key in cache:
+        return cache[key]
+
+    # Try with explicit language; if override model name provided, pass it through.
+    try:
+        align_model, metadata = whisperx.load_align_model(
+            language_code=lang,
+            device=device,
+            model_name=align_model_name if align_model_name else None
+        )
+    except Exception as e:
+        raise RuntimeError(f"Impossible de charger le modèle d'alignement pour la langue '{lang}'. "
+                           f"Essayez --align_model <huggingface-model>. Détail: {e}")
+
+    cache[key] = (align_model, metadata)
+    return cache[key]
+
+def transcribe_one_file(path: Path, asr_model, device: str, batch_size: int,
+                        align_cache: Dict[Tuple[str, str], Tuple[object, dict]],
+                        align_model_name: str | None = None) -> Dict[str, Any]:
+    # ASR for this file
     result = asr_model.transcribe(str(path), batch_size=batch_size)
+
+    # Determine language from ASR result
+    lang = result.get("language")
+    if not lang:
+        # Some versions may not set "language" at top level; try from segments if present
+        segs = result.get("segments") or []
+        if segs and isinstance(segs[0], dict) and "language" in segs[0]:
+            lang = segs[0]["language"]
+    if not lang:
+        # Fallback: let user know in error; alignment requires a language
+        raise RuntimeError(
+            f"Langue non détectée pour {path.name}. Relancez en précisant un modèle avec --align_model "
+            f"(voir wav2vec2.0 finetuné sur la langue cible dans https://huggingface.co/models)."
+        )
+
+    # Load align model for detected language (cached)
+    align_model, metadata = get_align_model(lang, device, align_cache, align_model_name)
+
     aligned = whisperx.align(
         result["segments"], align_model, metadata, str(path), device, return_char_alignments=False
     )
-    # aligned has "word_segments"
     return aligned
 
 # =========================
@@ -259,6 +300,7 @@ def main():
     parser.add_argument("--device", default=("cuda" if torch.cuda.is_available() else "cpu"))
     parser.add_argument("--compute_type", default=None, help="float16|float32 (default auto)")
     parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--align_model", default=None, help="Optional HF model name for alignment (e.g., 'wav2vec2-large-xlsr-53-french')")
     args = parser.parse_args()
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -280,16 +322,24 @@ def main():
     mp3_files = unzip_mp3s(args.zip_path)
     print(f"[INFO] Fichiers audio: {len(mp3_files)}")
 
-    # Load models once
-    asr_model, align_model, metadata = load_whisperx_models(args.device, compute_type, args.whisperx_model)
+    # Load ASR model once
+    asr_model = load_asr_model(args.device, compute_type, args.whisperx_model)
 
     all_segments = []
     total_input = 0.0
+    align_cache: Dict[Tuple[str, str], Tuple[object, dict]] = {}
 
     # Transcribe each file independently (low memory)
     for f in mp3_files:
         print(f"[INFO] Transcription: {f.name}")
-        aligned = transcribe_one_file(f, asr_model, align_model, metadata, args.device, args.batch_size)
+        aligned = transcribe_one_file(
+            f,
+            asr_model=asr_model,
+            device=args.device,
+            batch_size=args.batch_size,
+            align_cache=align_cache,
+            align_model_name=args.align_model,
+        )
         words = aligned.get("word_segments", [])
         if not words:
             print(f"[WARN] Pas de word_segments pour {f}")
