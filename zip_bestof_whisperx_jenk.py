@@ -79,9 +79,9 @@ def load_whisperx_models(device: str, compute_type: str, whisperx_model: str):
 def transcribe_one_file(path: Path, asr_model, align_model, metadata, device: str, batch_size: int) -> Dict[str, Any]:
     # Transcribe this file only
     result = asr_model.transcribe(str(path), batch_size=batch_size)
-    # result["language"] might be None until alignment; try from segments if available
-    lang = result.get("language")
-    aligned = whisperx.align(result["segments"], align_model, metadata, str(path), device, return_char_alignments=False)
+    aligned = whisperx.align(
+        result["segments"], align_model, metadata, str(path), device, return_char_alignments=False
+    )
     # aligned has "word_segments"
     return aligned
 
@@ -219,3 +219,129 @@ def cut_and_concat_with_ffmpeg(clips: List[Dict[str, Any]], out_path: str):
             "ffmpeg", "-y",
             "-ss", f"{ss:.3f}",
             "-to", f"{to:.3f}",
+            "-i", str(src),
+            "-vn",
+            "-c:a", "libmp3lame", "-q:a", "2",
+            str(part),
+        ]
+        run_ffmpeg(cmd)
+        part_files.append(part)
+
+    # Create concat list
+    list_file = tempdir / "concat.txt"
+    with open(list_file, "w", encoding="utf-8") as f:
+        for pf in part_files:
+            f.write(f"file '{pf.as_posix()}'\n")
+
+    # Concatenate without re-encoding
+    cmd_concat = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", str(list_file),
+        "-c", "copy",
+        out_path,
+    ]
+    run_ffmpeg(cmd_concat)
+
+# =========================
+# Main
+# =========================
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("zip_path")
+    parser.add_argument("--keep_pct", type=float, default=20.0)
+    parser.add_argument("--openai_model", default="gpt-4o-mini")
+    parser.add_argument("--out_dir", default="bestof_out")
+    parser.add_argument("--gas_url", required=True)
+    parser.add_argument("--doc_id", required=True)
+    parser.add_argument("--whisperx_model", default="small", help="tiny|base|small|medium|large-v2")
+    parser.add_argument("--device", default=("cuda" if torch.cuda.is_available() else "cpu"))
+    parser.add_argument("--compute_type", default=None, help="float16|float32 (default auto)")
+    parser.add_argument("--batch_size", type=int, default=8)
+    args = parser.parse_args()
+
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY manquant.")
+
+    # Be conservative with CPU threads (helps RAM too)
+    try:
+        torch.set_num_threads(max(1, int(os.environ.get("PYTORCH_NUM_THREADS", "1"))))
+    except Exception:
+        pass
+
+    compute_type = args.compute_type or ("float16" if args.device == "cuda" else "float32")
+
+    # Charger le prompt depuis Google Doc via GAS
+    system_prompt = fetch_prompt(args.gas_url, args.doc_id)
+    print(f"[INFO] Prompt système chargé ({len(system_prompt)} chars)")
+
+    # Unzip only
+    mp3_files = unzip_mp3s(args.zip_path)
+    print(f"[INFO] Fichiers audio: {len(mp3_files)}")
+
+    # Load models once
+    asr_model, align_model, metadata = load_whisperx_models(args.device, compute_type, args.whisperx_model)
+
+    all_segments = []
+    total_input = 0.0
+
+    # Transcribe each file independently (low memory)
+    for f in mp3_files:
+        print(f"[INFO] Transcription: {f.name}")
+        aligned = transcribe_one_file(f, asr_model, align_model, metadata, args.device, args.batch_size)
+        words = aligned.get("word_segments", [])
+        if not words:
+            print(f"[WARN] Pas de word_segments pour {f}")
+            continue
+        file_segments = words_to_segments(words)
+        # Tag with source file, keep local timestamps
+        for s in file_segments:
+            s["file"] = str(f)
+        # Track total input duration (use file duration)
+        try:
+            dur = AudioSegment.from_file(f, format="mp3").duration_seconds
+        except Exception:
+            dur = max((seg["end"] for seg in file_segments), default=0.0)
+        total_input += float(dur)
+        all_segments.extend(file_segments)
+
+    if not all_segments:
+        raise RuntimeError("Aucun segment détecté sur l'ensemble des fichiers.")
+
+    print(f"[INFO] Segments générés: {len(all_segments)}")
+
+    # Score with GPT in batches
+    scored = score_all_segments_with_gpt(all_segments, args.openai_model, system_prompt)
+
+    keep_ratio = max(0.0, min(1.0, args.keep_pct / 100.0))
+    target_seconds = total_input * keep_ratio
+    chosen = select_segments_to_target(scored, target_seconds)
+
+    # Save chosen clips (file + local timestamps)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    clips_json_path = str(out_dir / "clips_selected.json")
+    with open(clips_json_path, "w", encoding="utf-8") as f:
+        json.dump({"clips": [
+            {"file": c["file"], "start": c["start"], "end": c["end"], "label": c.get("label", ""), "score": c.get("score", 0.0)}
+            for c in chosen
+        ]}, f, ensure_ascii=False, indent=2)
+
+    # Cut and concat with ffmpeg (streamed)
+    bestof_mp3 = str(out_dir / "bestof.mp3")
+    if chosen:
+        cut_and_concat_with_ffmpeg(chosen, bestof_mp3)
+        # Compute resulting duration quickly
+        try:
+            bo_dur = AudioSegment.from_file(bestof_mp3, format="mp3").duration_seconds
+        except Exception:
+            # fallback if pydub probing fails
+            bo_dur = sum((c["end"] - c["start"]) for c in chosen)
+    else:
+        bo_dur = 0.0
+
+    print(f"=== Résultat ===\nBest-of : {bestof_mp3} ({human_time(bo_dur)})")
+
+if __name__ == "__main__":
+    main()
