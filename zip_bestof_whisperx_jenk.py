@@ -6,12 +6,13 @@ import math
 import zipfile
 import argparse
 import tempfile
+import subprocess
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
-import requests  # pour appeler le GAS
+import requests
 
-# --- Audio utils ---
+# --- Audio utils (only to probe durations if needed) ---
 from pydub import AudioSegment
 
 # --- WhisperX ---
@@ -20,7 +21,7 @@ import whisperx
 
 # --- OpenAI ---
 from openai import OpenAI
-client = OpenAI()  # client global
+client = OpenAI()  # global client
 
 # =========================
 # Utils
@@ -35,6 +36,13 @@ def human_time(sec: float) -> str:
     else:
         return f"{m:d}:{s:05.2f}"
 
+def run_ffmpeg(cmd: List[str]):
+    # Fail fast with readable error
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {' '.join(cmd)}\n{p.stderr}")
+    return p
+
 # =========================
 # Prompt loader (depuis GAS)
 # =========================
@@ -46,69 +54,39 @@ def fetch_prompt(gas_url: str, doc_id: str) -> str:
     return r.text.strip()
 
 # =========================
-# 1) Unzip & Concat
+# 1) Unzip (no concat)
 # =========================
 
-def unzip_and_concat(zip_path: str, silence_sec: float = 10.0) -> Dict[str, Any]:
+def unzip_mp3s(zip_path: str) -> List[Path]:
     out_dir = Path(tempfile.mkdtemp(prefix="whx_zip_"))
     with zipfile.ZipFile(zip_path, 'r') as zf:
         zf.extractall(out_dir)
-
     mp3_files = sorted([p for p in out_dir.rglob("*.mp3")], key=lambda p: str(p).lower())
     if not mp3_files:
         raise FileNotFoundError("Aucun MP3 trouvé dans le ZIP.")
-
-    silence = AudioSegment.silent(duration=int(silence_sec * 1000))
-    timeline_map = []
-    concat = AudioSegment.silent(duration=0)
-
-    cursor_ms = 0
-    for i, mp3 in enumerate(mp3_files):
-        seg = AudioSegment.from_file(mp3, format="mp3")
-        start_ms = cursor_ms
-        concat += seg
-        cursor_ms += len(seg)
-
-        timeline_map.append({
-            "file": str(mp3),
-            "start": start_ms / 1000.0,
-            "end": cursor_ms / 1000.0
-        })
-
-        if i != len(mp3_files) - 1:
-            concat += silence
-            cursor_ms += len(silence)
-
-    concat_path = str(out_dir / "concatenated_input.mp3")
-    concat.export(concat_path, format="mp3")
-
-    return {
-        "concat_path": concat_path,
-        "total_input_duration": cursor_ms / 1000.0,
-        "file_map": timeline_map,
-        "workdir": str(out_dir)
-    }
+    return mp3_files
 
 # =========================
-# 2) WhisperX word-level
+# 2) WhisperX per-file
 # =========================
 
-def transcribe_wordlevel_whisperx(audio_path: str) -> Dict[str, Any]:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    compute_type = "float16" if device == "cuda" else "float32"
-    print(f"[INFO] WhisperX sur {device} (compute={compute_type})")
+def load_whisperx_models(device: str, compute_type: str, whisperx_model: str):
+    print(f"[INFO] WhisperX sur {device} (compute={compute_type}, model={whisperx_model})")
+    asr_model = whisperx.load_model(whisperx_model, device, compute_type=compute_type)
+    align_model, metadata = whisperx.load_align_model(language_code=None, device=device)
+    return asr_model, align_model, metadata
 
-    model = whisperx.load_model("small", device, compute_type=compute_type)
-    result = model.transcribe(audio_path, batch_size=16)
-
-    model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
-    result_aligned = whisperx.align(
-        result["segments"], model_a, metadata, audio_path, device, return_char_alignments=False
-    )
-    return result_aligned
+def transcribe_one_file(path: Path, asr_model, align_model, metadata, device: str, batch_size: int) -> Dict[str, Any]:
+    # Transcribe this file only
+    result = asr_model.transcribe(str(path), batch_size=batch_size)
+    # result["language"] might be None until alignment; try from segments if available
+    lang = result.get("language")
+    aligned = whisperx.align(result["segments"], align_model, metadata, str(path), device, return_char_alignments=False)
+    # aligned has "word_segments"
+    return aligned
 
 # =========================
-# 2.5) Agréger mots -> segments
+# 2.5) words -> segments (carry file info)
 # =========================
 
 def words_to_segments(word_segments: List[Dict[str, Any]], max_gap: float = 0.6, max_chars: int = 300) -> List[Dict[str, Any]]:
@@ -156,7 +134,7 @@ def words_to_segments(word_segments: List[Dict[str, Any]], max_gap: float = 0.6,
     return segs
 
 # =========================
-# 3) Appel GPT : score des segments
+# 3) GPT scoring (unchanged)
 # =========================
 
 def openai_score_segments(segments, model: str, system_prompt: str):
@@ -208,7 +186,7 @@ def score_all_segments_with_gpt(segments, model: str, system_prompt: str, batch_
     return out
 
 # =========================
-# 3.5) Sélection jusqu'à la durée cible
+# 3.5) Select to target
 # =========================
 
 def select_segments_to_target(scored_segments, target_seconds: float):
@@ -218,91 +196,26 @@ def select_segments_to_target(scored_segments, target_seconds: float):
     for seg in ss:
         dur = seg["end"] - seg["start"]
         if total + dur <= target_seconds * 1.03:
-            selected.append({"start": seg["start"], "end": seg["end"], "label": seg.get("label", "")})
+            selected.append(seg)
             total += dur
         if total >= target_seconds:
             break
-    merged = []
-    for seg in sorted(selected, key=lambda x: x["start"]):
-        if not merged:
-            merged.append(seg)
-            continue
-        if seg["start"] - merged[-1]["end"] < 0.2:
-            merged[-1]["end"] = max(merged[-1]["end"], seg["end"])
-            merged[-1]["label"] = (merged[-1]["label"] + " | " + seg.get("label", "")).strip(" |")
-        else:
-            merged.append(seg)
-    return merged
+    return selected
 
 # =========================
-# 4) Construire le best-of audio
+# 4) Build best-of using ffmpeg (no big buffers)
 # =========================
 
-def build_bestof_audio(concat_mp3_path: str, clips, out_path: str) -> float:
-    base = AudioSegment.from_file(concat_mp3_path, format="mp3")
-    bestof = AudioSegment.silent(duration=0)
-    for c in clips:
-        start_ms = int(c["start"] * 1000)
-        end_ms = int(c["end"] * 1000)
-        if end_ms > len(base):
-            end_ms = len(base)
-        if start_ms < 0 or start_ms >= end_ms:
-            continue
-        bestof += base[start_ms:end_ms]
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    bestof.export(out_path, format="mp3")
-    return len(bestof) / 1000.0
-
-# =========================
-# Main
-# =========================
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("zip_path")
-    parser.add_argument("--keep_pct", type=float, default=20.0)
-    parser.add_argument("--silence_between", type=float, default=10.0)
-    parser.add_argument("--openai_model", default="gpt-4o-mini")
-    parser.add_argument("--out_dir", default="bestof_out")
-    parser.add_argument("--gas_url", required=True, help="URL du script GAS (WebApp)")
-    parser.add_argument("--doc_id", required=True, help="ID du Google Doc contenant le prompt")
-    args = parser.parse_args()
-
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY manquant.")
-
-    # Charger le prompt depuis Google Doc via GAS
-    system_prompt = fetch_prompt(args.gas_url, args.doc_id)
-    print(f"[INFO] Prompt système chargé ({len(system_prompt)} chars)")
-
-    concat_info = unzip_and_concat(args.zip_path, silence_sec=args.silence_between)
-    concat_mp3 = concat_info["concat_path"]
-    total_input = concat_info["total_input_duration"]
-    print(f"[INFO] Concat terminé: {concat_mp3} ({human_time(total_input)})")
-
-    aligned = transcribe_wordlevel_whisperx(concat_mp3)
-    words = aligned.get("word_segments", [])
-    if not words:
-        raise RuntimeError("Pas de word_segments")
-
-    segments = words_to_segments(words)
-    print(f"[INFO] Segments générés: {len(segments)}")
-
-    scored = score_all_segments_with_gpt(segments, args.openai_model, system_prompt)
-    keep_ratio = max(0.0, min(1.0, args.keep_pct / 100.0))
-    target_seconds = total_input * keep_ratio
-    chosen = select_segments_to_target(scored, target_seconds)
-
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    clips_json_path = str(out_dir / "clips_selected.json")
-    with open(clips_json_path, "w", encoding="utf-8") as f:
-        json.dump({"clips": chosen}, f, ensure_ascii=False, indent=2)
-
-    bestof_mp3 = str(out_dir / "bestof.mp3")
-    best_dur = build_bestof_audio(concat_mp3, chosen, bestof_mp3)
-
-    print(f"=== Résultat ===\nBest-of : {bestof_mp3} ({human_time(best_dur)})")
-
-if __name__ == "__main__":
-    main()
+def cut_and_concat_with_ffmpeg(clips: List[Dict[str, Any]], out_path: str):
+    tempdir = Path(tempfile.mkdtemp(prefix="whx_cuts_"))
+    part_files = []
+    # Cut each clip as its own small mp3, re-encode for accurate trims
+    for idx, c in enumerate(clips):
+        src = Path(c["file"])
+        ss = max(0.0, float(c["start"]))
+        to = max(ss, float(c["end"]))
+        part = tempdir / f"part_{idx:05d}.mp3"
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", f"{ss:.3f}",
+            "-to", f"{to:.3f}",
