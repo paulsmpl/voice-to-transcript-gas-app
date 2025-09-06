@@ -100,7 +100,7 @@ if s.get('hasBestof'): sys.exit(0)
 PY
 
 # 2) Get file ID from GAS
-FILE_ID=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
+FILE_ID=$(curl -L "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
   | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
 
 # 3) Download audios
