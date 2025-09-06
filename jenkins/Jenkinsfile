@@ -119,11 +119,11 @@ python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
   --batch_size "${BATCH_SIZE}"
 
 # 5) Upload MP3
-curl -sS -X POST "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
+curl -L -sS -X POST "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
      --data-binary @out_${DATE_TO_PROCESS}/bestof.mp3
 
 # 6) Archive
-curl -sS -X POST "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
+curl -L -sS -X POST "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
 '''
       }
     }
