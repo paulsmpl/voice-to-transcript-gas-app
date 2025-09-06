@@ -1,78 +1,144 @@
 pipeline {
   agent any
+
   environment {
+    // Secrets / params
     GAS_BASE_URL   = credentials('gas_base_url')
     GAS_TOKEN      = credentials('gas_token')
     OPENAI_API_KEY = credentials('openai_api_key')
     GAS_URL        = credentials('gas_url')
     GAS_DOC_ID     = credentials('gas_doc_id')
+
+    // App params
     KEEP_PCT       = '20'
     MODE           = 'DAILY'
+
+    // Torch / BLAS threading (reduces RAM spikes on CPU)
+    OMP_NUM_THREADS        = '1'
+    MKL_NUM_THREADS        = '1'
+    PYTORCH_NUM_THREADS    = '1'
+    TOKENIZERS_PARALLELISM = 'false'
   }
+
+  options {
+    // Fail fast and keep logs shorter
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    ansiColor('xterm')
+    timeout(time: 120, unit: 'MINUTES')
+  }
+
   stages {
+
     stage('Checkout') {
       steps {
         git branch: 'main', url: 'https://github.com/paulsmpl/voice-to-transcript-gas-app.git'
       }
     }
-    stage('Setup Python venv') {
+
+    stage('Setup system deps & venv') {
       steps {
         sh '''
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y python3 python3-pip python3.11-venv python3-venv python3-full ffmpeg build-essential jq
-          /usr/bin/python3 -m venv venv
+          apt-get install -y --no-install-recommends \
+             python3 python3-pip python3.11-venv python3-venv python3-full \
+             ffmpeg build-essential jq ca-certificates
+          python3 -m venv venv
           . venv/bin/activate
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # ensure gdown present (used below)
+          pip install --upgrade gdown
         '''
       }
     }
+
     stage('Compute date') {
       steps {
         script {
           if (env.MODE == 'DAILY') {
             env.DATE_TO_PROCESS = sh(
-              script: ". venv/bin/activate && python - <<'PY'\nfrom datetime import datetime,timedelta;print((datetime.utcnow()-timedelta(days=1)).strftime('%Y-%m-%d'))\nPY",
+              script: """. venv/bin/activate && python - <<'PY'
+from datetime import datetime, timedelta
+print((datetime.utcnow()-timedelta(days=1)).strftime('%Y-%m-%d'))
+PY""",
               returnStdout: true
             ).trim()
           }
         }
       }
     }
+
     stage('Process daily') {
       when { expression { env.MODE == 'DAILY' } }
       steps {
         sh '''
+          set -euxo pipefail
           . venv/bin/activate
+
+          # Detect GPU; choose device & batch size conservatively
+          if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+            DEVICE="cuda"
+            BATCH_SIZE="8"     # keep modest to limit VRAM
+            COMPUTE_TYPE="float16"
+          else
+            DEVICE="cpu"
+            BATCH_SIZE="4"     # smaller for low RAM
+            COMPUTE_TYPE="float32"
+          fi
+          echo "Using DEVICE=$DEVICE, BATCH_SIZE=$BATCH_SIZE"
+
           # 1) Check status
           curl -sSL "${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" -o status.json
           python - <<'PY'
 import json,sys
 s=json.load(open('status.json'))
+# skip build (success) when no input or already has bestof
 if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
+
           # 2) Get file ID from GAS
           FILE_ID=$(curl -sSL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
             | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
-          
-          # 3) Download audios with gdown
+
+          # 3) Download audios
           gdown "$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
 
-          # 4) Best-of
+          # 4) Best-of (memory-safe script you updated)
           export OPENAI_API_KEY="${OPENAI_API_KEY}"
-          python zip_bestof_whisperx_jenk.py audios_${DATE_TO_PROCESS}.zip \
-            --keep_pct ${KEEP_PCT} \
-            --out_dir out_${DATE_TO_PROCESS} \
+          python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
+            --keep_pct "${KEEP_PCT}" \
+            --out_dir "out_${DATE_TO_PROCESS}" \
             --gas_url "${GAS_URL}" \
-            --doc_id "${GAS_DOC_ID}"
-          # 5) Upload
+            --doc_id "${GAS_DOC_ID}" \
+            --whisperx_model "small" \
+            --device "${DEVICE}" \
+            --compute_type "${COMPUTE_TYPE}" \
+            --batch_size "${BATCH_SIZE}"
+
+          # 5) Upload MP3
           curl -sS -X POST "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
                --data-binary @out_${DATE_TO_PROCESS}/bestof.mp3
+
           # 6) Archive
           curl -sS -X POST "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
         '''
       }
+    }
+  }
+
+  post {
+    failure {
+      echo 'Build failed.'
+    }
+    success {
+      echo 'Done.'
+    }
+    always {
+      // Light cleanup (keep artifacts in out_*/ if needed by GAS)
+      sh 'rm -f status.json || true'
     }
   }
 }
