@@ -133,10 +133,13 @@ python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
   --compute_type "${COMPUTE_TYPE}" \
   --batch_size "${BATCH_SIZE}"
 
-# 5) Upload MP3
+# 5) Upload MP3 (JSON + base64 pour préserver l'intégrité binaire)
+B64=$(base64 -w 0 "out_${DATE_TO_PROCESS}/bestof.mp3" 2>/dev/null || base64 "out_${DATE_TO_PROCESS}/bestof.mp3" | tr -d '\n')
+JSON=$(printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' "$DATE_TO_PROCESS" "$B64")
+
 curl --http1.1 -L -sS \
-  -H "Content-Type: audio/mpeg" \
-  --data-binary @out_${DATE_TO_PROCESS}/bestof.mp3 \
+  -H "Content-Type: application/json" \
+  -d "$JSON" \
   "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
 
 # 6) Archive (POST vide avec Content-Length: 0)
@@ -144,6 +147,7 @@ curl --http1.1 -L -sS \
   -H "Content-Type: application/json" \
   -d '' \
   "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
+
 
 '''
       }
