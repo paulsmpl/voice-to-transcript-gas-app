@@ -1,0 +1,59 @@
+pipeline {
+  agent any
+
+  parameters {
+    file(name: 'upload', description: 'Audio file upload (via iOS Shortcut)')
+  }
+
+ 
+
+  options {
+    timeout(time: 20, unit: 'MINUTES')
+    timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+  }
+
+  stages {
+    stage('Prepare') {
+      steps {
+        script {
+          sh 'mkdir -p input'
+          sh 'cp "$upload" input/input.m4a'
+        }
+      }
+    }
+
+    stage('Install deps + venv') {
+      steps {
+        sh '''
+          set -eux
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install --upgrade pip
+        '''
+      }
+    }
+
+    stage('Run Python processing') {
+      steps {
+        sh '''
+          set -eux
+          . venv/bin/activate
+          python process_audio.py input/input.m4a
+        '''
+      }
+    }
+  }
+
+  post {
+    success {
+      echo '✅ Processing completed successfully.'
+    }
+    failure {
+      echo '❌ Something went wrong.'
+    }
+    always {
+      sh 'rm -rf input venv'
+    }
+  }
+}
