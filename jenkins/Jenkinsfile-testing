@@ -1,0 +1,145 @@
+pipeline {
+  agent any
+
+  environment {
+    // Secrets / params
+    GAS_BASE_URL   = credentials('gas_base_url')
+    GAS_TOKEN      = credentials('gas_token')
+    OPENAI_API_KEY = credentials('openai_api_key')
+    GAS_URL        = credentials('gas_url')
+    GAS_DOC_ID     = credentials('gas_doc_id')
+
+    // App params
+    KEEP_PCT       = '20'
+    MODE           = 'DAILY'
+
+    // Torch / BLAS threading (reduces RAM spikes on CPU)
+    OMP_NUM_THREADS        = '1'
+    MKL_NUM_THREADS        = '1'
+    PYTORCH_NUM_THREADS    = '1'
+    TOKENIZERS_PARALLELISM = 'false'
+  }
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 120, unit: 'MINUTES')
+    timestamps()
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        git branch: 'main', url: 'https://github.com/paulsmpl/voice-to-transcript-gas-app.git'
+      }
+    }
+
+    stage('Setup system deps & venv') {
+      steps {
+        sh '''#!/usr/bin/env bash
+    set -euxo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Stop and mask background apt services that may hold the lock
+    systemctl stop apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+    systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+
+    # Retry loop with lock timeout
+    for i in {1..5}; do
+      if apt-get update && \
+        apt-get -o Dpkg::Lock::Timeout=600 install -y --no-install-recommends \
+            python3 python3-pip python3-venv python3.11-venv python3-full \
+            ffmpeg build-essential jq ca-certificates; then
+        break
+      fi
+      echo "APT lock or transient error, retrying in 20s (attempt $i/5)..."
+      sleep 20
+    done
+
+    python3 -m venv venv
+    . venv/bin/activate
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt
+    # ensure gdown present (used below)
+    pip install --upgrade gdown
+    '''
+      }
+}
+
+
+
+    stage('Compute date') {
+      steps {
+        script {
+          if (env.MODE == 'DAILY') {
+            env.DATE_TO_PROCESS = sh(returnStdout: true, script: '''#!/usr/bin/env bash
+set -euo pipefail
+. venv/bin/activate
+python - <<'PY'
+from datetime import datetime, timedelta
+print((datetime.utcnow()-timedelta(days=1)).strftime('%Y-%m-%d'))
+PY
+''').trim()
+          }
+        }
+      }
+    }
+
+    stage('Process daily') {
+      when { expression { env.MODE == 'DAILY' } }
+      steps {
+        sh '''#!/usr/bin/env bash
+set -euxo pipefail
+. venv/bin/activate
+
+# Detect GPU; choose device & batch size conservatively
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+  DEVICE="cuda"
+  BATCH_SIZE="8"     # keep modest to limit VRAM
+  COMPUTE_TYPE="float16"
+else
+  DEVICE="cpu"
+  BATCH_SIZE="4"     # smaller for low RAM
+  COMPUTE_TYPE="float32"
+fi
+echo "Using DEVICE=$DEVICE, BATCH_SIZE=$BATCH_SIZE, COMPUTE_TYPE=$COMPUTE_TYPE"
+
+
+wget http://reseau.pbconseil.ovh/epubs/test.mp3 -O out_${DATE_TO_PROCESS}/bestof.mp3
+
+# 5) Upload MP3 (JSON + base64 pour préserver l'intégrité binaire)
+
+# Encodage base64 portable (Linux/macOS)
+B64=$(base64 -w 0 "out_${DATE_TO_PROCESS}/bestof.mp3" 2>/dev/null || base64 "out_${DATE_TO_PROCESS}/bestof.mp3" | tr -d '\n')
+
+# Création du JSON dans un fichier temporaire
+TMP_JSON=$(mktemp /tmp/bestof_upload_XXXXXX.json)
+printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' "$DATE_TO_PROCESS" "$B64" > "$TMP_JSON"
+
+# Envoi du fichier via cURL
+curl --http1.1 -L -sS \
+  -H "Content-Type: application/json" \
+  --data @"$TMP_JSON" \
+  "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
+
+# Nettoyage du fichier temporaire
+rm -f "$TMP_JSON"
+
+# 6) Archive (POST vide avec Content-Length: 0)
+curl --http1.1 -L -sS \
+  -H "Content-Type: application/json" \
+  -d '' \
+  "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
+
+
+'''
+      }
+    }
+  }
+
+  post {
+    failure { echo 'Build failed.' }
+    success { echo 'Done.' }
+    always  { sh 'rm -f status.json || true' }
+  }
+}
