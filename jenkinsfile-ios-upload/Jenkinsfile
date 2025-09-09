@@ -13,13 +13,16 @@ pipeline {
 
   stages {
     stage('Prepare') {
-      steps {
+    steps {
         sh """
-          mkdir -p input
-          cp "$upload" input/input.m4a
+        echo "Upload file path: $upload"
+        ls -lh "$upload"
+        mkdir -p input
+        cp "$upload" input/input.m4a
         """
-      }
     }
+    }
+
 
     stage('Install deps + venv') {
       steps {
