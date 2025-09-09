@@ -11,30 +11,27 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
-
-
   stages {
-    stage('Debug upload') {
+    stage('Capture upload') {
       steps {
-        sh """
-          echo "Upload param: \$upload"
-          echo "Contenu du workspace :"
-          ls -lh
-        """
+        script {
+          // Sauvegarde du fichier temporairement dans /tmp avant que le checkout SCM n'écrase tout
+          sh "cp \"\$upload\" /tmp/input_audio.m4a"
+        }
       }
     }
 
-    stage('Prepare') {
-    steps {
-        sh """
-        echo "Upload received: $upload"
-        ls -lh "$upload"
-        mkdir -p input
-        cp "$upload" input/input.m4a
-        """
-    }
+    stage('Checkout SCM') {
+      steps {
+        checkout scm
+      }
     }
 
+    stage('Restore upload') {
+      steps {
+        sh "cp /tmp/input_audio.m4a input/input.m4a"
+      }
+    }
 
     stage('Install deps + venv') {
       steps {
@@ -43,7 +40,6 @@ pipeline {
           python3 -m venv venv
           . venv/bin/activate
           pip install --upgrade pip
-          pip install -r requirements.txt
         '''
       }
     }
@@ -53,21 +49,15 @@ pipeline {
         sh '''
           set -eux
           . venv/bin/activate
-          python process_audio.py input/input.m4a
+          python process_audio_and_upload.py input/input.m4a
         '''
       }
     }
   }
 
   post {
-    success {
-      echo '✅ Processing completed successfully.'
-    }
-    failure {
-      echo '❌ Something went wrong.'
-    }
     always {
-      sh 'rm -rf input venv || true'
+      sh 'rm -rf input venv /tmp/input_audio.m4a || true'
     }
   }
 }
