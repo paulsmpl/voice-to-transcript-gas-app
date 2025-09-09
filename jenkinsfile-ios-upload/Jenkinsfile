@@ -2,11 +2,11 @@ pipeline {
   agent any
 
   tools {
-    git 'Default' // Nom défini dans "Global Tool Configuration" de Jenkins
+    git 'Default'
   }
 
   parameters {
-    base64File(name: 'upload', description: 'Audio file upload (via iOS Shortcut)')
+    file(name: 'upload', description: 'Audio file upload (via iOS Shortcut)')
   }
 
   options {
@@ -23,11 +23,11 @@ pipeline {
     stage('Capture upload') {
       steps {
         withFileParameter('upload') {
-          echo "✅ Received uploaded file via plugin: $upload"
+          echo "✅ Received uploaded file: $upload"
           sh '''
             mkdir -p /tmp
             cp "$upload" "$TMP_AUDIO"
-            echo "Copied uploaded file to $TMP_AUDIO"
+            echo "Copied to $TMP_AUDIO"
           '''
         }
       }
@@ -35,7 +35,6 @@ pipeline {
 
     stage('Checkout SCM') {
       steps {
-        // Assure un clone propre, sans polluer le .git
         deleteDir()
         checkout scm
       }
