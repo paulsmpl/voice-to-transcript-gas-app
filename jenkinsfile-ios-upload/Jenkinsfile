@@ -13,15 +13,15 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
-  stages {
     stage('Prepare') {
-      steps {
-        script {
-          sh 'mkdir -p input'
-          sh 'cp "$upload" input/input.m4a'
-        }
-      }
+    steps {
+        sh """
+        mkdir -p input
+        cp "$upload" input/input.m4a
+        """
     }
+    }
+
 
     stage('Install deps + venv') {
       steps {
