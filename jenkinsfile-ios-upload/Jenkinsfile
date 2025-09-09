@@ -15,8 +15,12 @@ pipeline {
     stage('Capture upload') {
       steps {
         script {
-          // Sauvegarde du fichier temporairement dans /tmp avant que le checkout SCM n'écrase tout
-          sh "cp \"\$upload\" /tmp/input_audio.m4a"
+          def original = params.upload
+          echo "Upload filename: ${original}"
+          if (!fileExists(original)) {
+            error "❌ Upload file '${original}' not found in workspace."
+          }
+          sh "cp '${original}' /tmp/input_audio.m4a"
         }
       }
     }
@@ -27,9 +31,12 @@ pipeline {
       }
     }
 
-    stage('Restore upload') {
+    stage('Prepare') {
       steps {
-        sh "cp /tmp/input_audio.m4a input/input.m4a"
+        sh """
+          mkdir -p input
+          cp /tmp/input_audio.m4a input/input.m4a
+        """
       }
     }
 
