@@ -104,7 +104,7 @@ else
 fi
 echo "Using DEVICE=$DEVICE, BATCH_SIZE=$BATCH_SIZE, COMPUTE_TYPE=$COMPUTE_TYPE"
 
-
+mkdir -p "out_${DATE_TO_PROCESS}"
 wget http://reseau.pbconseil.ovh/epubs/test.mp3 -O out_${DATE_TO_PROCESS}/bestof.mp3
 
 # 5) Upload MP3 (JSON + base64 pour préserver l'intégrité binaire)
