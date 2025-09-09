@@ -15,7 +15,7 @@ input_path = Path(sys.argv[1])
 assert input_path.exists(), f"File not found: {input_path}"
 
 # === Convert to MP3 ===
-output_path = input_path.with_name(f"bestof_{HUMAN_DATE}.mp3")
+output_path = input_path.with_name(f"recording_{HUMAN_DATE}.mp3")
 subprocess.run([
     "ffmpeg", "-y", "-i", str(input_path),
     "-codec:a", "libmp3lame", "-qscale:a", "2",
