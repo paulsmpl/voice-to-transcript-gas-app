@@ -11,18 +11,30 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
+  environment {
+    // Si tu as besoin d’un token OpenAI par exemple
+    // OPENAI_API_KEY = credentials('openai_api_key')
+  }
+
   stages {
-    stage('Prepare') {
-    steps {
+    stage('Debug upload') {
+      steps {
         sh """
-        echo "Upload file path: $upload"
-        ls -lh "$upload"
-        mkdir -p input
-        cp "$upload" input/input.m4a
+          echo "Upload param: \$upload"
+          echo "Contenu du workspace :"
+          ls -lh
         """
-    }
+      }
     }
 
+    stage('Prepare') {
+      steps {
+        sh """
+          mkdir -p input
+          cp "\$upload" input/input.m4a
+        """
+      }
+    }
 
     stage('Install deps + venv') {
       steps {
@@ -31,6 +43,7 @@ pipeline {
           python3 -m venv venv
           . venv/bin/activate
           pip install --upgrade pip
+          pip install -r requirements.txt
         '''
       }
     }
@@ -54,7 +67,7 @@ pipeline {
       echo '❌ Something went wrong.'
     }
     always {
-      sh 'rm -rf input venv'
+      sh 'rm -rf input venv || true'
     }
   }
 }
