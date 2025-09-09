@@ -11,10 +11,7 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
-  environment {
-    // Si tu as besoin d’un token OpenAI par exemple
-    // OPENAI_API_KEY = credentials('openai_api_key')
-  }
+
 
   stages {
     stage('Debug upload') {
