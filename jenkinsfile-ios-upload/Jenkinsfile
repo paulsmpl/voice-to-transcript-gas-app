@@ -1,8 +1,12 @@
 pipeline {
   agent any
 
+  tools {
+    git 'Default' // Nom défini dans "Global Tool Configuration" de Jenkins
+  }
+
   parameters {
-    file(name: 'upload', description: 'Audio file upload (via iOS Shortcut)')
+    base64File(name: 'upload', description: 'Audio file upload (via iOS Shortcut)')
   }
 
   options {
@@ -11,32 +15,38 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
+  environment {
+    TMP_AUDIO = '/tmp/input_audio.m4a'
+  }
+
   stages {
     stage('Capture upload') {
       steps {
-        script {
-          def original = params.upload
-          echo "Upload filename: ${original}"
-          if (!fileExists(original)) {
-            error "❌ Upload file '${original}' not found in workspace."
-          }
-          sh "cp '${original}' /tmp/input_audio.m4a"
+        withFileParameter('upload') {
+          echo "✅ Received uploaded file via plugin: $upload"
+          sh '''
+            mkdir -p /tmp
+            cp "$upload" "$TMP_AUDIO"
+            echo "Copied uploaded file to $TMP_AUDIO"
+          '''
         }
       }
     }
 
     stage('Checkout SCM') {
       steps {
+        // Assure un clone propre, sans polluer le .git
+        deleteDir()
         checkout scm
       }
     }
 
-    stage('Prepare') {
+    stage('Prepare input') {
       steps {
-        sh """
+        sh '''
           mkdir -p input
-          cp /tmp/input_audio.m4a input/input.m4a
-        """
+          cp "$TMP_AUDIO" input/input.m4a
+        '''
       }
     }
 
@@ -47,6 +57,7 @@ pipeline {
           python3 -m venv venv
           . venv/bin/activate
           pip install --upgrade pip
+          pip install -r requirements.txt
         '''
       }
     }
@@ -64,7 +75,13 @@ pipeline {
 
   post {
     always {
-      sh 'rm -rf input venv /tmp/input_audio.m4a || true'
+      sh 'rm -rf input venv "$TMP_AUDIO" || true'
+    }
+    success {
+      echo '✅ Audio processed and uploaded to GAS successfully.'
+    }
+    failure {
+      echo '❌ Job failed. Check logs above.'
     }
   }
 }
