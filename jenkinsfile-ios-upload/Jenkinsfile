@@ -5,23 +5,21 @@ pipeline {
     file(name: 'upload', description: 'Audio file upload (via iOS Shortcut)')
   }
 
- 
-
   options {
     timeout(time: 20, unit: 'MINUTES')
     timestamps()
     buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
+  stages {
     stage('Prepare') {
-    steps {
+      steps {
         sh """
-        mkdir -p input
-        cp "$upload" input/input.m4a
+          mkdir -p input
+          cp "$upload" input/input.m4a
         """
+      }
     }
-    }
-
 
     stage('Install deps + venv') {
       steps {
@@ -43,7 +41,7 @@ pipeline {
         '''
       }
     }
-
+  }
 
   post {
     success {
@@ -56,4 +54,4 @@ pipeline {
       sh 'rm -rf input venv'
     }
   }
-  }
+}
