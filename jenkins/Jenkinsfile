@@ -134,14 +134,22 @@ python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
   --batch_size "${BATCH_SIZE}"
 
 # 5) Upload MP3 (JSON + base64 pour préserver l'intégrité binaire)
-B64=$(base64 -w 0 "out_${DATE_TO_PROCESS}/bestof.mp3" 2>/dev/null || base64 "out_${DATE_TO_PROCESS}/bestof.mp3" | tr -d '\n')
-JSON=$(printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' "$DATE_TO_PROCESS" "$B64")
 
+# Encodage base64 portable (Linux/macOS)
+B64=$(base64 -w 0 "out_${DATE_TO_PROCESS}/bestof.mp3" 2>/dev/null || base64 "out_${DATE_TO_PROCESS}/bestof.mp3" | tr -d '\n')
+
+# Création du JSON dans un fichier temporaire
+TMP_JSON=$(mktemp /tmp/bestof_upload_XXXXXX.json)
+printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' "$DATE_TO_PROCESS" "$B64" > "$TMP_JSON"
+
+# Envoi du fichier via cURL
 curl --http1.1 -L -sS \
   -H "Content-Type: application/json" \
-  -d "$JSON" \
+  --data @"$TMP_JSON" \
   "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
 
+# Nettoyage du fichier temporaire
+rm -f "$TMP_JSON"
 # 6) Archive (POST vide avec Content-Length: 0)
 curl --http1.1 -L -sS \
   -H "Content-Type: application/json" \
