@@ -36,7 +36,7 @@ pipeline {
     stage('Setup system deps & venv') {
       steps {
         sh '''#!/usr/bin/env bash
-set -euxo pipefail
+set -eux 
 export DEBIAN_FRONTEND=noninteractive
 systemctl stop apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
 systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
@@ -65,7 +65,7 @@ pip install --upgrade gdown
         script {
           for (int i = 2; i <= 30; i++) {
             def dateToProcess = sh(returnStdout: true, script: '''#!/usr/bin/env bash
-set -euo pipefail
+set -eu
 . venv/bin/activate
 python - <<'PY'
 from datetime import datetime, timedelta
