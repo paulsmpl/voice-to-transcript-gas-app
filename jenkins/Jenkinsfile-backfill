@@ -69,7 +69,8 @@ set -euo pipefail
 . venv/bin/activate
 python - <<'PY'
 from datetime import datetime, timedelta
-print((datetime.utcnow()-timedelta(days=${i})).strftime('%Y-%m-%d'))
+              i = int('$i')
+              print((datetime.utcnow()-timedelta(days=i)).strftime('%Y-%m-%d'))
 PY
 """).trim()
             env.DATE_TO_PROCESS = dateToProcess
