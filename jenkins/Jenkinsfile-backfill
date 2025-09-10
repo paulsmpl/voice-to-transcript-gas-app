@@ -27,6 +27,7 @@ pipeline {
   }
 
   stages {
+
     stage('Checkout') {
       steps {
         git branch: 'main', url: 'https://github.com/paulsmpl/voice-to-transcript-gas-app.git'
@@ -36,10 +37,12 @@ pipeline {
     stage('Setup system deps & venv') {
       steps {
         sh '''#!/usr/bin/env bash
-set -eux 
+set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
+
 systemctl stop apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
 systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+
 for i in {1..5}; do
   if apt-get update && \
     apt-get -o Dpkg::Lock::Timeout=600 install -y --no-install-recommends \
@@ -49,8 +52,8 @@ for i in {1..5}; do
   fi
   echo "APT lock or transient error, retrying in 20s (attempt $i/5)..."
   sleep 20
-
 done
+
 python3 -m venv venv
 . venv/bin/activate
 python -m pip install --upgrade pip
@@ -60,23 +63,28 @@ pip install --upgrade gdown
       }
     }
 
-    stage('Backfill dates N-2 to N-30') {
+    stage('Backfill N-2 to N-30') {
+      when { expression { env.MODE == 'BACKFILL' } }
       steps {
         script {
           for (int i = 2; i <= 30; i++) {
-            def dateToProcess = sh(returnStdout: true, script: '''#!/usr/bin/env bash
-set -eu
+            def dateToProcess = sh(returnStdout: true, script: """#!/usr/bin/env bash
+set -euo pipefail
 . venv/bin/activate
 python - <<'PY'
 from datetime import datetime, timedelta
-              i = int('$i')
-              print((datetime.utcnow()-timedelta(days=i)).strftime('%Y-%m-%d'))
+i = int("${i}")
+print((datetime.utcnow()-timedelta(days=i)).strftime('%Y-%m-%d'))
 PY
-''').trim()
+""").trim()
+
             env.DATE_TO_PROCESS = dateToProcess
-            // ...existing code...
-set -eux
+
+            sh """#!/usr/bin/env bash
+set -euxo pipefail
 . venv/bin/activate
+
+# Detect GPU; choose device & batch size
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
   DEVICE="cuda"
   BATCH_SIZE="8"
@@ -86,7 +94,9 @@ else
   BATCH_SIZE="4"
   COMPUTE_TYPE="float32"
 fi
-echo "Using DEVICE=$DEVICE, BATCH_SIZE=$BATCH_SIZE, COMPUTE_TYPE=$COMPUTE_TYPE"
+echo "Using DEVICE=\$DEVICE, BATCH_SIZE=\$BATCH_SIZE, COMPUTE_TYPE=\$COMPUTE_TYPE"
+
+# 1) Check status
 curl -sSL "${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" -o status.json
 python - <<'PY'
 import json,sys
@@ -94,9 +104,15 @@ s=json.load(open('status.json'))
 if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
-FILE_ID=$(curl -L "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
+
+# 2) Get file ID
+FILE_ID=\$(curl -L "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
   | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
-gdown "$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
+
+# 3) Download
+gdown "\$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
+
+# 4) Best-of
 export OPENAI_API_KEY="${OPENAI_API_KEY}"
 python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
   --keep_pct "${KEEP_PCT}" \
@@ -104,24 +120,27 @@ python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
   --gas_url "${GAS_URL}" \
   --doc_id "${GAS_DOC_ID}" \
   --whisperx_model "small" \
-  --device "${DEVICE}" \
-  --compute_type "${COMPUTE_TYPE}" \
-  --batch_size "${BATCH_SIZE}"
-B64=$(base64 -w 0 "out_${DATE_TO_PROCESS}/bestof.mp3" 2>/dev/null || base64 "out_${DATE_TO_PROCESS}/bestof.mp3" | tr -d '\n')
-TMP_JSON=$(mktemp /tmp/bestof_upload_XXXXXX.json)
-printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' "$DATE_TO_PROCESS" "$B64" > "$TMP_JSON"
+  --device "\$DEVICE" \
+  --compute_type "\$COMPUTE_TYPE" \
+  --batch_size "\$BATCH_SIZE"
+
+# 5) Upload MP3
+B64=\$(base64 -w 0 "out_${DATE_TO_PROCESS}/bestof.mp3" 2>/dev/null || base64 "out_${DATE_TO_PROCESS}/bestof.mp3" | tr -d '\\n')
+TMP_JSON=\$(mktemp /tmp/bestof_upload_XXXXXX.json)
+printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' "${DATE_TO_PROCESS}" "\$B64" > "\$TMP_JSON"
+
 curl --http1.1 -L -sS \
   -H "Content-Type: application/json" \
-  --data @"$TMP_JSON" \
+  --data @"\$TMP_JSON" \
   "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
-rm -f "$TMP_JSON"
+rm -f "\$TMP_JSON"
+
+# 6) Archive
 curl --http1.1 -L -sS \
   -H "Content-Type: application/json" \
   -d '' \
   "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
-'''
-'''
-            sh '''#!/usr/bin/env bash
+"""
           }
         }
       }
