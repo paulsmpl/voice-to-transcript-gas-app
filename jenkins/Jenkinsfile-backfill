@@ -117,8 +117,16 @@ if s.get('hasBestof'): sys.exit(0)
 PY
 
 # 2) Get file ID
-FILE_ID=\$(curl -L "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
-  | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
+FILE_ID=\$(curl -sL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
+  | python -c "import sys, json; \
+try: print(json.load(sys.stdin).get('id','')) \
+except: print('')")
+
+if [ -z "\$FILE_ID" ]; then
+  echo "⚠️ No file ID for \${DATE_TO_PROCESS}, skipping..."
+  exit 0
+fi
+
 
 # 3) Download
 gdown "\$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
