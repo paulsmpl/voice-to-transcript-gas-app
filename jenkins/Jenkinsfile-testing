@@ -58,10 +58,10 @@ pipeline {
 
     python3 -m venv venv
     . venv/bin/activate
-    python -m pip install --upgrade pip
-    pip install -r requirements.txt
+    python -m pip install --no-cache-dir --upgrade pip
+    pip install --no-cache-dir -r requirements.txt
     # ensure gdown present (used below)
-    pip install --upgrade gdown
+    pip install --no-cache-dir --upgrade gdown
     '''
       }
 }
