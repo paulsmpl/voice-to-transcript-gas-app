@@ -75,7 +75,7 @@ PY
 ''').trim()
             env.DATE_TO_PROCESS = dateToProcess
             // ...existing code...
-set -euxo pipefail
+set -eux
 . venv/bin/activate
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
   DEVICE="cuda"
