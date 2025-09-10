@@ -1,0 +1,133 @@
+pipeline {
+  agent any
+
+  environment {
+    // Secrets / params
+    GAS_BASE_URL   = credentials('gas_base_url')
+    GAS_TOKEN      = credentials('gas_token')
+    OPENAI_API_KEY = credentials('openai_api_key')
+    GAS_URL        = credentials('gas_url')
+    GAS_DOC_ID     = credentials('gas_doc_id')
+
+    // App params
+    KEEP_PCT       = '20'
+    MODE           = 'BACKFILL'
+
+    // Torch / BLAS threading (reduces RAM spikes on CPU)
+    OMP_NUM_THREADS        = '1'
+    MKL_NUM_THREADS        = '1'
+    PYTORCH_NUM_THREADS    = '1'
+    TOKENIZERS_PARALLELISM = 'false'
+  }
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 360, unit: 'MINUTES')
+    timestamps()
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        git branch: 'main', url: 'https://github.com/paulsmpl/voice-to-transcript-gas-app.git'
+      }
+    }
+
+    stage('Setup system deps & venv') {
+      steps {
+        sh '''#!/usr/bin/env bash
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+systemctl stop apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+for i in {1..5}; do
+  if apt-get update && \
+    apt-get -o Dpkg::Lock::Timeout=600 install -y --no-install-recommends \
+        python3 python3-pip python3-venv python3.11-venv python3-full \
+        ffmpeg build-essential jq ca-certificates; then
+    break
+  fi
+  echo "APT lock or transient error, retrying in 20s (attempt $i/5)..."
+  sleep 20
+
+done
+python3 -m venv venv
+. venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install --upgrade gdown
+'''
+      }
+    }
+
+    stage('Backfill dates N-2 to N-30') {
+      steps {
+        script {
+          for (int i = 2; i <= 30; i++) {
+            def dateToProcess = sh(returnStdout: true, script: """#!/usr/bin/env bash
+set -euo pipefail
+. venv/bin/activate
+python - <<'PY'
+from datetime import datetime, timedelta
+print((datetime.utcnow()-timedelta(days=${i})).strftime('%Y-%m-%d'))
+PY
+""").trim()
+            env.DATE_TO_PROCESS = dateToProcess
+            sh """#!/usr/bin/env bash
+set -euxo pipefail
+. venv/bin/activate
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+  DEVICE="cuda"
+  BATCH_SIZE="8"
+  COMPUTE_TYPE="float16"
+else
+  DEVICE="cpu"
+  BATCH_SIZE="4"
+  COMPUTE_TYPE="float32"
+fi
+echo "Using DEVICE=$DEVICE, BATCH_SIZE=$BATCH_SIZE, COMPUTE_TYPE=$COMPUTE_TYPE"
+curl -sSL \"${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}\" -o status.json
+python - <<'PY'
+import json,sys
+s=json.load(open('status.json'))
+if not s.get('hasInput'): sys.exit(0)
+if s.get('hasBestof'): sys.exit(0)
+PY
+FILE_ID=$(curl -L \"${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}\" \
+  | python -c "import sys, json; print(json.load(sys.stdin)['id'])")
+gdown \"$FILE_ID\" -O \"audios_${DATE_TO_PROCESS}.zip\"
+export OPENAI_API_KEY=\"${OPENAI_API_KEY}\"
+python zip_bestof_whisperx_jenk.py \"audios_${DATE_TO_PROCESS}.zip\" \
+  --keep_pct \"${KEEP_PCT}\" \
+  --out_dir \"out_${DATE_TO_PROCESS}\" \
+  --gas_url \"${GAS_URL}\" \
+  --doc_id \"${GAS_DOC_ID}\" \
+  --whisperx_model \"small\" \
+  --device \"${DEVICE}\" \
+  --compute_type \"${COMPUTE_TYPE}\" \
+  --batch_size \"${BATCH_SIZE}\"
+B64=$(base64 -w 0 \"out_${DATE_TO_PROCESS}/bestof.mp3\" 2>/dev/null || base64 \"out_${DATE_TO_PROCESS}/bestof.mp3\" | tr -d '\n')
+TMP_JSON=$(mktemp /tmp/bestof_upload_XXXXXX.json)
+printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' \"$DATE_TO_PROCESS\" \"$B64\" > \"$TMP_JSON\"
+curl --http1.1 -L -sS \
+  -H "Content-Type: application/json" \
+  --data @\"$TMP_JSON\" \
+  \"${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}\"
+rm -f \"$TMP_JSON\"
+curl --http1.1 -L -sS \
+  -H "Content-Type: application/json" \
+  -d '' \
+  \"${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}\"
+"""
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    failure { echo 'Build failed.' }
+    success { echo 'Done.' }
+    always  { sh 'rm -f status.json || true' }
+  }
+}
