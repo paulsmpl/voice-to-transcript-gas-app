@@ -74,7 +74,6 @@ from datetime import datetime, timedelta
 PY
 """).trim()
             env.DATE_TO_PROCESS = dateToProcess
-            sh """#!/usr/bin/env bash
 set -euxo pipefail
 . venv/bin/activate
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
@@ -120,6 +119,7 @@ curl --http1.1 -L -sS \
   -d '' \
   \"${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}\"
 """
+            sh """#!/usr/bin/env bash
           }
         }
       }
