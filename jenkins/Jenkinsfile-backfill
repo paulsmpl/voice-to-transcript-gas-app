@@ -120,8 +120,8 @@ curl --http1.1 -L -sS \
   -d '' \
   "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
 '''
-"""
-            sh """#!/usr/bin/env bash
+'''
+            sh '''#!/usr/bin/env bash
           }
         }
       }
