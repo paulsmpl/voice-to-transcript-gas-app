@@ -57,14 +57,11 @@ done
 python3 -m venv venv
 . venv/bin/activate
 python -m pip install --no-cache-dir --upgrade pip
-# Supprime cache apt
+
+# Nettoyage caches
 apt-get clean
 rm -rf /var/lib/apt/lists/*
-
-# Supprime cache pip
 pip cache purge || true
-
-# Supprime anciens logs et TMP
 rm -rf ~/.cache/pip
 rm -rf /tmp/*
 
@@ -79,23 +76,23 @@ pip install --no-cache-dir --upgrade gdown
       steps {
         script {
           for (int i = 2; i <= 30; i++) {
-            def dateToProcess = sh(returnStdout: true, script: """#!/usr/bin/env bash
+            def dateToProcess = sh(returnStdout: true, script: '''#!/usr/bin/env bash
 set -euo pipefail
 . venv/bin/activate
 python - <<'PY'
 from datetime import datetime, timedelta
-i = int("${i}")
+i = int(''' + i.toString() + ''')
 print((datetime.utcnow()-timedelta(days=i)).strftime('%Y-%m-%d'))
 PY
-""").trim()
+''').trim()
 
             env.DATE_TO_PROCESS = dateToProcess
 
-            sh """#!/usr/bin/env bash
+            sh '''#!/usr/bin/env bash
 set -euxo pipefail
 . venv/bin/activate
 
-# Detect GPU; choose device & batch size
+# Detect GPU
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
   DEVICE="cuda"
   BATCH_SIZE="8"
@@ -105,7 +102,7 @@ else
   BATCH_SIZE="4"
   COMPUTE_TYPE="float32"
 fi
-echo "Using DEVICE=\$DEVICE, BATCH_SIZE=\$BATCH_SIZE, COMPUTE_TYPE=\$COMPUTE_TYPE"
+echo "Using DEVICE=$DEVICE, BATCH_SIZE=$BATCH_SIZE, COMPUTE_TYPE=$COMPUTE_TYPE"
 
 # 1) Check status
 curl -sSL "${GAS_BASE_URL}?action=status&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" -o status.json
@@ -116,20 +113,17 @@ if not s.get('hasInput'): sys.exit(0)
 if s.get('hasBestof'): sys.exit(0)
 PY
 
-# 2) Get file ID
+# 2) Get file ID (safe JSON parse)
 FILE_ID=$(curl -sL "${GAS_BASE_URL}?action=zip&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}" \
-  | python -c "import sys, json; \
-data=sys.stdin.read().strip(); \
-print(json.loads(data).get('id','') if data else '')")
+  | python -c "import sys, json; data=sys.stdin.read().strip(); print(json.loads(data).get('id','') if data else '')")
 
 if [ -z "$FILE_ID" ]; then
   echo "⚠️ No file ID for ${DATE_TO_PROCESS}, skipping..."
   exit 0
 fi
 
-
 # 3) Download
-gdown "\$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
+gdown "$FILE_ID" -O "audios_${DATE_TO_PROCESS}.zip"
 
 # 4) Best-of
 export OPENAI_API_KEY="${OPENAI_API_KEY}"
@@ -139,27 +133,27 @@ python zip_bestof_whisperx_jenk.py "audios_${DATE_TO_PROCESS}.zip" \
   --gas_url "${GAS_URL}" \
   --doc_id "${GAS_DOC_ID}" \
   --whisperx_model "small" \
-  --device "\$DEVICE" \
-  --compute_type "\$COMPUTE_TYPE" \
-  --batch_size "\$BATCH_SIZE"
+  --device "$DEVICE" \
+  --compute_type "$COMPUTE_TYPE" \
+  --batch_size "$BATCH_SIZE"
 
 # 5) Upload MP3
-B64=\$(base64 -w 0 "out_${DATE_TO_PROCESS}/bestof.mp3" 2>/dev/null || base64 "out_${DATE_TO_PROCESS}/bestof.mp3" | tr -d '\\n')
-TMP_JSON=\$(mktemp /tmp/bestof_upload_XXXXXX.json)
-printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' "${DATE_TO_PROCESS}" "\$B64" > "\$TMP_JSON"
+B64=$(base64 -w 0 "out_${DATE_TO_PROCESS}/bestof.mp3" 2>/dev/null || base64 "out_${DATE_TO_PROCESS}/bestof.mp3" | tr -d '\\n')
+TMP_JSON=$(mktemp /tmp/bestof_upload_XXXXXX.json)
+printf '{"filename":"bestof_%s.mp3","mimeType":"audio/mpeg","data":"%s"}' "${DATE_TO_PROCESS}" "$B64" > "$TMP_JSON"
 
 curl --http1.1 -L -sS \
   -H "Content-Type: application/json" \
-  --data @"\$TMP_JSON" \
+  --data @"$TMP_JSON" \
   "${GAS_BASE_URL}?action=uploadBestof&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
-rm -f "\$TMP_JSON"
+rm -f "$TMP_JSON"
 
 # 6) Archive
 curl --http1.1 -L -sS \
   -H "Content-Type: application/json" \
   -d '' \
   "${GAS_BASE_URL}?action=archive&date=${DATE_TO_PROCESS}&token=${GAS_TOKEN}"
-"""
+'''
           }
         }
       }
