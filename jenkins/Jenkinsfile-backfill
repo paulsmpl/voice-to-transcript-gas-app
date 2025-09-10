@@ -64,7 +64,7 @@ pip install --upgrade gdown
       steps {
         script {
           for (int i = 2; i <= 30; i++) {
-            def dateToProcess = sh(returnStdout: true, script: """#!/usr/bin/env bash
+            def dateToProcess = sh(returnStdout: true, script: '''#!/usr/bin/env bash
 set -euo pipefail
 . venv/bin/activate
 python - <<'PY'
@@ -72,7 +72,7 @@ from datetime import datetime, timedelta
               i = int('$i')
               print((datetime.utcnow()-timedelta(days=i)).strftime('%Y-%m-%d'))
 PY
-""").trim()
+''').trim()
             env.DATE_TO_PROCESS = dateToProcess
 set -euxo pipefail
 . venv/bin/activate
