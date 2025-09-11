@@ -75,7 +75,7 @@ pip install --no-cache-dir --upgrade gdown
       when { expression { env.MODE == 'BACKFILL' } }
       steps {
         script {
-          for (int i = 2; i <= 30; i++) {
+          for (int i = 9; i <= 30; i++) {
             def dateToProcess = sh(returnStdout: true, script: '''#!/usr/bin/env bash
 set -euo pipefail
 . venv/bin/activate
